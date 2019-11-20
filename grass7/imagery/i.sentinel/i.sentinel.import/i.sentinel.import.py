@@ -206,15 +206,16 @@ class SentinelImporter(object):
         args = {}
         if link:
             module = 'r.external'
+            args['flags'] = 'o' if override else None
         else:
             args['memory'] = options['memory']
             if reproject:
                 module = 'r.import'
                 args['resample'] = 'bilinear'
                 args['resolution'] = 'value'
-                args['flags'] = 'o' if override else None
             else:
                 module = 'r.in.gdal'
+                args['flags'] = 'o' if override else None
 
         for f in self.files:
             if not override and (link or (not link and not reproject)):
