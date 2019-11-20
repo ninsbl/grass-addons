@@ -332,6 +332,7 @@ class SentinelImporter(object):
             if node is not None:
                 try:
                     # check S2
+                    print([sn.text for list(node)])
                     tile_id = [subnode.text for subnode in node.getchildren() if subnode.tag.startswith('TILE_ID')][0]
                     if not tile_id.startswith('S2'):
                         gs.fatal(_("Register file can be created only for Sentinel-2 data."))
