@@ -5,6 +5,8 @@
 #include <grass/raster.h>
 #include <grass/vector.h>
 
+#define REALLOC_INCREMENT 1024
+
 #ifndef DBL_MAX
 #define DBL_MAX 1.797693E308    /* DBL_MAX approximation */
 #endif
@@ -21,14 +23,14 @@
 
 struct cell_map
 {
-    int rows, cols;
+    int nrows, ncols;
     CELL **c;
 };
 
 struct raster_map
 {
     RASTER_MAP_TYPE type;
-    int rows, cols;
+    int nrows, ncols;
     union
     {
         void **v;
@@ -94,16 +96,30 @@ void add_line(struct line_list *, struct line *);
 void accumulate(struct cell_map *, struct raster_map *, struct raster_map *,
                 char **, char);
 
-/* delineate_streams.c */
-void delineate_streams(struct Map_info *, struct cell_map *,
-                       struct raster_map *, double, char);
-
 /* subaccumulate.c */
 void subaccumulate(struct Map_info *, struct cell_map *, struct raster_map *,
                    struct point_list *);
 
-/* calculate_lfp.c */
-void calculate_lfp(struct Map_info *, struct cell_map *, struct raster_map *,
-                   int *, char *, struct point_list *);
+/* delineate_subwatersheds_iterative.c */
+void delineate_subwatersheds_iterative(struct cell_map *, char **, int *,
+                                       struct point_list *);
+
+/* delineate_subwatersheds_recursive.c */
+void delineate_subwatersheds_recursive(struct cell_map *, char **, int *,
+                                       struct point_list *);
+
+/* delineate_streams.c */
+void delineate_streams(struct Map_info *, struct cell_map *,
+                       struct raster_map *, double, char);
+
+/* calculate_lfp_iterative.c */
+void calculate_lfp_iterative(struct Map_info *, struct cell_map *,
+                             struct raster_map *, int *, char *,
+                             struct point_list *);
+
+/* calculate_lfp_recursive.c */
+void calculate_lfp_recursive(struct Map_info *, struct cell_map *,
+                             struct raster_map *, int *, char *,
+                             struct point_list *);
 
 #endif

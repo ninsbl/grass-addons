@@ -1,7 +1,7 @@
 <h2>DESCRIPTION</h2>
 
-<em>r.accumulate</em> calculates weighted flow accumulation, stream networks,
-and the longest flow path using a flow direction map.
+<em>r.accumulate</em> calculates weighted flow accumulation, subwatersheds,
+stream networks, and longest flow paths using a flow direction map.
 
 <h2>NOTES</h2>
 
@@ -22,17 +22,9 @@ the module twice with and without <b>-n</b> flag and <b>weight</b> option may
 be useful in this specific case.
 
 <p>The module recognizes two different formats of the flow direction map:
-<div class="code"><pre>
-Direction encoding for neighbors of x
-
-  135  90  45             3 2 1
-  180  x  360             4 x 8
-  225 270 315             5 6 7
-
-  degrees              45 degrees
-  CCW from East        CCW from East
-                   (r.watershed drainage)
-</pre></div>
+<div align="center">
+<img src="r_accumulate_formats.png" alt="degree">
+</div>
 
 <p>Since the module does not use elevation data (i.e., slope), flow
 accumulation is calculated by single flow direction (SFD) routing and may not
@@ -44,6 +36,11 @@ provided to save computational time by not repeating this process.  In this
 case, it is important to use flow accumulation consistent with the flow
 direction map (e.g., <b>accumulation</b> output from this module).
 
+<h3>Subwatershed delineation</h3>
+
+With <b>subwatershed</b> option, the module will delineate subwatersheds for
+outlets specified by <b>coordinates</b> and/or <b>outlet</b> options.
+
 <h3>Stream network delineation</h3>
 
 With <b>stream</b> and <b>threshold</b> options, the module will delineate
@@ -53,6 +50,13 @@ lines are split at confluences.
 
 <p>With <b>-c</b> flag, stream lines are delineated across confluences and may
 overlap with other stream lines that share the same downstream outlet.
+
+<p>With <b>input_subaccumulation</b> option, streams will be delineated as if
+there are no incoming flows from upstream subwatersheds defined by
+subaccumulation. This option is useful when you want to delineate streams
+completely contained inside a subwatershed without considering the main channel
+coming from outside the subwatershed (e.g., surface runoff within
+subwatersheds).
 
 <h3>Longest flow path calculation</h3>
 
@@ -95,13 +99,13 @@ r.accumulate direction=drain_directions accumulation=flow_accum_new
 # copy color table
 r.colors map=flow_accum_new raster=flow_accum
 
-# check difference betwen flow_accum and flow_accum_new
+# check difference between flow_accum and flow_accum_new
 r.mapcalc expression="accum_diff=if(flow_accum-flow_accum_new, flow_accum-flow_accum_new, null())"
 </pre></div>
 
 <img src="r_accumulate_nc_example.png">
 
-<p>For some reaon, there are slight differences between the two output maps.
+<p>For some reason, there are slight differences between the two output maps.
 
 <p><img src="r_watershed_nc_example.png">
 
@@ -129,14 +133,15 @@ g.region raster=elevation -p
 r.watershed elevation=elevation accumulation=flow_accum drainage=drain_directions -s -a
 
 # use r.accumulate to create flow_accum_new and streams_new at once
-r.accumulate direction=drain_directions accumulation=flow_accum_new threshold=50000 stream=streams_new
+r.accumulate direction=drain_directions accumulation=flow_accum_new threshold=50000 \
+    stream=streams_new
 
 # or delineate stream networks only without creating an accumulation map
 r.accumulate direction=drain_directions threshold=50000 stream=streams_new_only
 
-# use r.stream.extract, elevation, and flow_accum_new to delineate stream networks
-r.stream.extract elevation=elevation accumulation=flow_accum threshold=50000 stream_vector=streams_extract \
-    direction=drain_directions_extract
+# use r.stream.extract, elevation, and flow_accum to delineate stream networks
+r.stream.extract elevation=elevation accumulation=flow_accum threshold=50000 \
+    stream_vector=streams_extract direction=drain_directions_extract
 </pre></div>
 
 <img src="r_accumulate_nc_stream_example.png">
@@ -155,9 +160,9 @@ maps are different.
 
 <p><img src="r_accumulate_nc_stream_comparison.png">
 
-<h3>Longest flow path calculation</h3>
+<h3>Subwatershed delineation</h3>
 
-<p>Create the longest flow path for one outlet:
+<p>Delineate the watershed for one outlet:
 <div class="code"><pre>
 # set computational region
 g.region raster=elevation -p
@@ -165,16 +170,46 @@ g.region raster=elevation -p
 # calculate drainage directions using r.watershed
 r.watershed elevation=elevation drainage=drain_directions -s -a
 
-# delineate watershed
-r.water.outlet input=drain_directions output=basin coordinates=642455,222614
+# delineate the watershed for one outlet
+r.accumulate direction=drain_directions subwatershed=watershed lfp=lfp coordinates=642455,222614
+</pre></div>
 
-# calculate longest flow path
-r.accumulate direction=drain_directions lfp=lfp coordinates=642455,222614
+<img src="r_accumulate_nc_watershed_example.png">
+
+<p>Delineate multiple subwatersheds:
+<div class="code"><pre>
+# set computational region
+g.region raster=elevation -p
+
+# calculate drainage directions using r.watershed
+r.watershed elevation=elevation drainage=drain_directions -s -a
+
+# delineate two subwatersheds
+r.accumulate direction=drain_directions subwatershed=subwatersheds \
+    coordinates=642455,222614,637176,223625
+</pre></div>
+
+<img src="r_accumulate_nc_subwatersheds_example.png">
+
+<h3>Longest flow path calculation</h3>
+
+<p>Calculate the longest flow path for one outlet:
+<div class="code"><pre>
+# set computational region
+g.region raster=elevation -p
+
+# calculate drainage directions using r.watershed
+r.watershed elevation=elevation drainage=drain_directions -s -a
+
+# calculate the longest flow path and delineate the watershed for an outlet
+r.accumulate direction=drain_directions subwatershed=watershed lfp=lfp coordinates=642455,222614
 </pre></div>
 
 <img src="r_accumulate_nc_lfp_example_single.png">
 
-<p>Note that there can be more than one longest flow path when multiple paths have the same flow length. In fact, the above example produces two lines with the same length.
+<p>Note that there can be more than one longest flow path when multiple paths
+have the same flow length. In fact, the above example produces two lines with
+the same length.
 
 <p><img src="r_accumulate_nc_lfp_example_single_warning.png">
 
@@ -196,18 +231,23 @@ r.accumulate direction=drain_directions lfp=lfp_w_id coordinates=642455,222614,6
 # calculate longest flow paths at all points in the outlets map
 r.accumulate direction=drain_directions lfp=lfp_at_outlets outlet=outlets
 
-# calculate longest flow paths at all points in the outlets map and assign IDs using a column in this map
+# calculate longest flow paths at all points in the outlets map and assign IDs using a column \
+# in this map
 r.accumulate direction=drain_directions lfp=lfp_at_outlets_w_id outlet=outlets \
     id_column=lfp_id outlet_id_column=outlet_id
 
-# calculate longest flow paths at given coordinates and all points in the outlets map and assign IDs
-r.accumulate direction=drain_directions lfp=lfp_multi_w_id coordinates=642455,222614,642314,222734 \
+# calculate longest flow paths at given coordinates and all points in the outlets map and \
+# assign IDs
+r.accumulate direction=drain_directions lfp=lfp_multi_w_id \
+    coordinates=642455,222614,642314,222734 \
     outlet=outlets id=1,2 id_column=lfp_id outlet_id_column=outlet_id
 </pre></div>
 
 <p><img src="r_accumulate_nc_lfp_example_multiple.png">
 
-<p>Calculate the longest flow paths for subwatersheds:
+<h3>Longest flow path calculation and subwatershed delineation in one run</h3>
+
+<p>Calculate longest flow paths and delineate subwatersheds in one rune:
 <div class="code"><pre>
 # set computational region
 g.region raster=elevation -p
@@ -235,27 +275,13 @@ cats=`db.select -c sql="select stream_points_2.cat from stream_points_2 \
 cats=`echo $cats | tr " " ,`
 v.extract input=stream_points layer=2 cats=$cats output=stream_outlets
 
-# create the longest flow paths for all outlets
+# calculate longest flow paths and delineate subwatersheds for all outlets
 r.accumulate direction=drain_directions lfp=lfp id_column=id \
-    outlet=stream_outlets outlet_layer=2 outlet_id_column=lcat
-
-# delineate subwatersheds
-i=1
-for coor in `v.report -c map=stream_outlets layer=2 option=coor | awk -F'|' '{printf "%s,%s\n", $4, $5}'`; do
-    r.water.outlet --o input=drain_directions output=tmp coordinates=$coor
-    r.mapcalc expression="subwatershed_$i=if(isnull(tmp),0,1&lt;&lt;($i-1))"
-    i=`expr $i + 1`
-done
-
-# patch subwatersheds
-subwatersheds=`g.list type=rast pattern=subwatershed_* sep=+`
-r.mapcalc express="subwatersheds=if($subwatersheds,$subwatersheds,null())"
+    outlet=stream_outlets outlet_layer=2 outlet_id_column=lcat \
+    subwatershed=subwatersheds
 
 # convert subwatersheds to vector
 r.to.vect input=subwatersheds type=area output=subwatersheds
-
-# delete subwatershed rasters
-g.remove -f type=rast pattern=subwatershed*
 </pre></div>
 
 <img src="r_accumulate_nc_lfp_example_subwatersheds.png">
