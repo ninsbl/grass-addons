@@ -101,6 +101,8 @@ import os
 import re
 from collections import defaultdict
 import json
+from pathlib import Path
+from datetime import datetime
 from pprint import pprint
 
 import grass.script as gs
@@ -186,11 +188,11 @@ def clean_line_item(text):
     return text
 
 
-def get_year_from_documentation(text):
-    """Extract year from text containing SVN date entry
+def get_year_from_documentation_file_attributes(path):
+    """Extract year from file attributes of the documentation
 
-    >>> text = "<p><i>Last changed: $Date: 2011-09-29 15:18:47 $</i>"
-    >>> get_year_from_documentation(text)
+    >>> path = documentation_filename(name)
+    >>> get_year_from_documentation_file_attributes(path)
     2011
     """
     # we try to capture even when not properly worded (same below)
