@@ -1,0 +1,164 @@
+<h2>DESCRIPTION</h2>
+
+The <em>i.jaxa.download</em> addon allows exploring and downloading satellite products
+from the <a href="https://gportal.jaxa.jp/">G-Portal</a> of the Japan Aerospace
+Exploration Agency (JAXA).
+
+The G-Portal provides data via FTP that is organized in a hirachical folder
+structure with the following levels that are reflected in the module options:
+
+<ol>
+<li>product_type</li>
+<li>spacecraft</li>
+<li>sensor</li>
+<li>product</li>
+<li>version</li>
+</ol>
+
+All the above options need to be provided in order to download data from the portal.
+If no input is provided for any of these options, the available content of the
+respective hirarchy is printed. The elements from the returned list can then be
+used as input to the missing option.
+
+In addition, the following options can be used to further filter data products to
+download. They correspond to elements in the file names.
+<ul>
+<li>time_unit</li>
+<li>projection</li>
+<li>resolution</li>
+<li>tiles</li>
+</ul>
+
+Not all combinations of the available options and filters are valid and lead to
+actually downloadable data. Predefined products represent combinations of
+option values and filters that represent specific products. If the <em>
+predefined_products</em> is used, other options and filters are overwritten
+(except for the <em>tiles</em> option).
+
+<p>
+Returned data can in addition be filtered using the <em>start</em> and <em>end</em>
+options.
+
+<p>
+The module supports parallel download if instructed to use more than one core in
+the <em>nprocs</em> option.
+
+<p>
+Downloads are resumed if incomplete files are in the local directory.
+
+<p>
+To connect to the G-Portal a <em>user</em> name is required.
+see <a href="https://gportal.jaxa.jp/gpr/user/regist1">Register
+new account</a> page for signing up.
+
+<p><em>i.jaxa.download</em> reads the user credentials from a <b>settings</b>
+file. That file must contain the user name in the first line.
+<p>
+The user name can be also defined interactively when <b>settings=-</b> is given.
+Note that interactive prompt does not work in the graphical user interface.
+
+<div class="code"><pre>
+myusername
+</pre></div>
+
+<h2>NOTES</h2>
+
+The module is primarily written for data products from the GCOM-C spacecraft.
+Other data products can be explored and downloaded as well, but that is less
+tested and may require adjustment of the code.
+
+
+<p>
+The module does not provide any spatial filtering of the data and the user has to
+identify e.g. relevant tiles.
+
+<p>
+The <b>output</b> directory is created if not yet available.
+
+<h2>EXAMPLES</h2>
+
+<h3>Download predefined daily LST product for selected tiles</h3>
+
+<div class="code"><pre>
+# List content
+i.jaxa.download -l settings=jaxasetting  nprocs=3 \
+predefined_product=GCOM_C_LST_L2_250m_daily start=2019-01-01 end=2019-01-02 \
+tiles=0217,0218,0317,0318
+
+GC1SG1_20190101D01D_T0217_L2SG_LST_Q_2000.h5|2021-05-06 07:55:56|0.5413455963134766
+GC1SG1_20190101A01D_T0217_L2SG_LST_Q_2000.h5|2021-05-06 06:58:04|0.622650146484375
+GC1SG1_20190101D01D_T0317_L2SG_LST_Q_2000.h5|2021-05-06 07:58:02|6.569341659545898
+GC1SG1_20190101D01D_T0218_L2SG_LST_Q_2000.h5|2021-05-06 07:56:06|1.8068771362304688
+GC1SG1_20190101D01D_T0318_L2SG_LST_Q_2000.h5|2021-05-06 07:58:10|8.163455963134766
+GC1SG1_20190101A01D_T0218_L2SG_LST_Q_2000.h5|2021-05-06 06:58:13|2.0076980590820312
+GC1SG1_20190101A01D_T0317_L2SG_LST_Q_2000.h5|2021-05-06 07:00:31|8.177543640136719
+GC1SG1_20190101A01D_T0318_L2SG_LST_Q_2000.h5|2021-05-06 07:00:41|9.502296447753906
+GC1SG1_20190102A01D_T0317_L2SG_LST_Q_2000.h5|2021-05-07 11:44:58|3.9774227142333984
+GC1SG1_20190102D01D_T0218_L2SG_LST_Q_2000.h5|2021-05-06 09:53:43|1.7240724563598633
+GC1SG1_20190102A01D_T0318_L2SG_LST_Q_2000.h5|2021-05-06 08:52:15|6.984950065612793
+GC1SG1_20190102D01D_T0217_L2SG_LST_Q_2000.h5|2021-05-06 09:53:26|0.8886928558349609
+GC1SG1_20190102D01D_T0317_L2SG_LST_Q_2000.h5|2021-05-06 09:57:03|4.559089660644531
+GC1SG1_20190102D01D_T0318_L2SG_LST_Q_2000.h5|2021-05-06 09:57:23|12.59920883178711
+GC1SG1_20190102A01D_T0218_L2SG_LST_Q_2000.h5|2021-05-06 08:50:05|1.0071592330932617
+GC1SG1_20190102A01D_T0217_L2SG_LST_Q_2000.h5|2021-05-07 11:44:49|0.8547334671020508
+
+# Download content
+i.jaxa.download output=gcom_c_lst settings=jaxasetting  nprocs=3 \
+predefined_product=GCOM_C_LST_L2_250m_daily start=2019-01-01 end=2019-01-02 \
+tiles=0217,0218,0317,0318
+
+</pre></div>
+
+<h3>List available products of the SGLI sensor on the GCOM-C spacecraft</h3>
+
+<div class="code"><pre>
+# List content
+i.jaxa.download -l settings=jaxasetting spacecraft="GCOM-C" \
+sensor="GCOM-C.SGLI"
+
+L1A
+L1B
+L2.ATMOS.ARNP
+L2.ATMOS.ARNP.Global
+L2.ATMOS.ARPL
+L2.ATMOS.ARPL.Global
+L2.ATMOS.CLFG
+
+</pre></div>
+
+<h3>Download data product according to user defined combination of options</h3>
+
+<div class="code"><pre>
+i.jaxa.download -l settings=jaxasetting spacecraft="GCOM-C" \
+sensor="GCOM-C.SGLI" product="L3.LAND.EVI_" nprocs=3 \
+start=2019-01-01 end=2019-01-31 time_unit=8_day projection=EQR
+
+GC1SG1_20190109D08D_D0000_3MSG_EVI_F_2000.h5|2021-05-10 02:18:13|9.491171836853027
+GC1SG1_20190117D08D_D0000_3MSG_EVI_F_2000.h5|2021-05-18 20:05:29|9.83663272857666
+GC1SG1_20190125D08D_D0000_3MSG_EVI_F_2000.h5|2021-05-18 22:01:32|10.257586479187012
+GC1SG1_20190101A08D_D0000_3MSG_EVI_F_2000.h5|2021-03-12 00:16:54|0.13436126708984375
+GC1SG1_20190101D08D_D0000_3MSG_EVI_F_2000.h5|2021-03-16 22:27:54|9.39345645904541
+GC1SG1_20190117A08D_D0000_3MSG_EVI_F_2000.h5|2021-05-09 02:39:06|0.11828994750976562
+GC1SG1_20190109A08D_D0000_3MSG_EVI_F_2000.h5|2021-03-17 00:11:45|0.11991691589355469
+GC1SG1_20190125A08D_D0000_3MSG_EVI_F_2000.h5|2021-05-10 02:18:46|0.11828994750976562
+...
+</pre></div>
+
+<h2>SEE ALSO</h2>
+
+<em>
+<a href="i.jaxa.html">Overview of i.jaxa toolset</a>
+<a href="i.jaxa.import.html">i.jaxa.import</a>
+</em>
+
+<h2>AUTHOR</h2>
+
+Stefan Blumentrath,
+<a href="https://www.nina.no/kontakt/Ansatte/Ansattinformasjon.aspx?AnsattID=14230">
+Norwegian Institute for Nature Research (NINA)</a>, Oslo, Norway<br>
+Written for the ClimateEcotones project.
+
+<!--
+<p>
+<i>Last changed: $Date$</i>
+-->
