@@ -194,17 +194,15 @@ def get_datetime_from_documentation(text):
     >>> get_datetime_from_documentation(text)
     datetime.datetime(2022, 9, 18, 23, 55, 9)
     """
-    datetime_capture = (
-        r"^  (Latest change: )(.*)( in commit: ).*"
-        )
+    datetime_capture = r"^  (Latest change: )(.*)( in commit: ).*"
     match = re.search(datetime_capture, text, re.MULTILINE | re.DOTALL | re.IGNORECASE)
     if match:
         date_format = "%A %b %d %H:%M:%S %Y"
     else:
-        datetime_capture = (
-            r"^  (Accessed: ).*([A-Z][a-z]{2} [A-Z][a-z]{2} [0-9]{1,2} [0-9]{2}:[0-9]{2}:[0-9]{2} [0-9]{4}).*"
-            )
-        match = re.search(datetime_capture, text, re.MULTILINE | re.DOTALL | re.IGNORECASE)
+        datetime_capture = r"^  (Accessed: ).*([A-Z][a-z]{2} [A-Z][a-z]{2} [0-9]{1,2} [0-9]{2}:[0-9]{2}:[0-9]{2} [0-9]{4}).*"
+        match = re.search(
+            datetime_capture, text, re.MULTILINE | re.DOTALL | re.IGNORECASE
+        )
         date_format = "%a %b %d %H:%M:%S %Y"
     if match:
         try:
@@ -332,9 +330,7 @@ def get_authors_from_documentation(text):
     # HTML tags or section name can theoretically be different case.
     # The "last changed" part might be missing.
     # The i and em could be exchanged.
-    author_section_capture = (
-        r"(<h2>.*AUTHOR.*</h2>)(.*)(<h2>.*SOURCE CODE.*</h2>)"
-    )
+    author_section_capture = r"(<h2>.*AUTHOR.*</h2>)(.*)(<h2>.*SOURCE CODE.*</h2>)"
     match = re.search(
         author_section_capture, text, re.MULTILINE | re.DOTALL | re.IGNORECASE
     )
@@ -846,7 +842,9 @@ def get_core_modules():
     # so here standard module prefixes are filtered
     module_prefixes = ["d.", "db", "g.", "h.", "i.", "m.", "r.", "r3", "t.", "v."]
     # TODO: see what get_commands() does on MS Windows
-    modules = sorted([cmd for cmd in gs.get_commands()[0] if cmd[0:2] in module_prefixes])
+    modules = sorted(
+        [cmd for cmd in gs.get_commands()[0] if cmd[0:2] in module_prefixes]
+    )
     return modules
 
 
