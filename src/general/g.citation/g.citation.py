@@ -188,6 +188,35 @@ def clean_line_item(text):
     return text
 
 
+def get_datetime_from_documentation(text):
+    """Extract year from text containing SVN date entry
+    >>> text = "  Latest change: Monday Jun 28 11:54:09 2021 in commit: 1cfc0af029a35a5d6c7dae5ca7204d0eb85dbc55"
+    >>> get_datetime_from_documentation(text)
+    datetime.datetime(2022, 9, 18, 23, 55, 9)
+    """
+    datetime_capture = (
+        r"^  (Latest change: )(.*)( in commit: ).*"
+        )
+    match = re.search(datetime_capture, text, re.MULTILINE | re.DOTALL | re.IGNORECASE)
+    if match:
+        date_format = "%A %b %d %H:%M:%S %Y"
+    else:
+        datetime_capture = (
+            r"^  (Accessed: ).*([A-Z][a-z]{2} [A-Z][a-z]{2} [0-9]{1,2} [0-9]{2}:[0-9]{2}:[0-9]{2} [0-9]{4}).*"
+            )
+        match = re.search(datetime_capture, text, re.MULTILINE | re.DOTALL | re.IGNORECASE)
+        date_format = "%a %b %d %H:%M:%S %Y"
+    if match:
+        try:
+            return datetime.strptime(match.group(2), date_format)
+        except ValueError:
+            raise RuntimeError("Could not parse date from maual")
+
+    else:
+        # TODO: raise or fatal? should be in library or module?
+        raise RuntimeError("The text does not contain date entry")
+
+
 def get_access_date_from_documentation_file_attributes(path):
     """Extract year from file attributes of the documentation
 
@@ -304,14 +333,14 @@ def get_authors_from_documentation(text):
     # The "last changed" part might be missing.
     # The i and em could be exchanged.
     author_section_capture = (
-        r"<h2>.*AUTHOR.*</h2>(.*)<p>\s*<(i|em)>(Last changed:|\$Date:)"
+        r"(<h2>.*AUTHOR.*</h2>)(.*)(<h2>.*SOURCE CODE.*</h2>)"
     )
-
     match = re.search(
         author_section_capture, text, re.MULTILINE | re.DOTALL | re.IGNORECASE
     )
+
     if match:
-        author_section = match.group(1)
+        author_section = match.group(2)
     else:
         raise RuntimeError(_("Unable to find Authors section"))
 
@@ -799,8 +828,8 @@ def citation_for_module(name, add_grass=False):
     citation["grass-version"] = g_version["version"]
     citation["grass-build-date"] = g_version["build_date"]
     citation["authors"] = get_authors_from_documentation(text)
-    citation["year"] = get_year_from_documentation_file_attributes(path)
-    citation["access"] = get_access_date_from_documentation_file_attributes(path)
+    citation["year"] = get_datetime_from_documentation(text).year
+    citation["access"] = get_datetime_from_documentation(text).isoformat()
     code_url, code_history_url = get_code_urls_from_documentation(text)
     citation["code-url"] = code_url
     citation["url-code-history"] = code_history_url
@@ -813,8 +842,11 @@ def citation_for_module(name, add_grass=False):
 
 
 def get_core_modules():
+    # test.r3flow manual is non-standard and breaks 'g.citation -a',
+    # so here standard module prefixes are filtered
+    module_prefixes = ["d.", "db", "g.", "h.", "i.", "m.", "r.", "r3", "t.", "v."]
     # TODO: see what get_commands() does on MS Windows
-    modules = sorted(gs.get_commands()[0])
+    modules = sorted([cmd for cmd in gs.get_commands()[0] if cmd[0:2] in module_prefixes])
     return modules
 
 
