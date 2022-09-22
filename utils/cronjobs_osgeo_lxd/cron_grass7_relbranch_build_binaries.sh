@@ -22,6 +22,7 @@
 # - generates the pyGRASS 7 HTML manual
 # - generates the user 7 HTML manuals
 # - injects DuckDuckGo search field
+# - injects G8 new version box
 
 # Preparations:
 #  - Install PROJ: http://trac.osgeo.org/proj/ incl Datum shift grids
@@ -35,6 +36,7 @@ PATH=/home/neteler/binaries/bin:/usr/bin:/bin:/usr/X11R6/bin:/usr/local/bin
 
 GMAJOR=7
 GMINOR=8
+GPATCH=7 # required by grass-addons-index.sh
 DOTVERSION=$GMAJOR.$GMINOR
 VERSION=$GMAJOR$GMINOR
 GVERSION=$GMAJOR
@@ -166,6 +168,12 @@ echo "Injecting DuckDuckGo search field into manual main page..."
 
 cp -p AUTHORS CHANGES CITING COPYING GPL.TXT INSTALL REQUIREMENTS.html $TARGETDIR/
 
+# inject G8.x new version hint in a red box:
+(cd $TARGETHTMLDIR/ ; for myfile in `ls *.html` ; do sed -i -e "s:<hr class=\"header\">:<hr class=\"header\"><p style=\"border\:3px; border-style\:solid; border-color\:#BC1818; padding\: 1em;\">Note\: This document is for an older version of GRASS GIS that will be discontinued soon. You should upgrade, and read the <a href=\"../../grass-stable/manuals/$myfile\">current manual page</a>.</p>:g" $myfile ; done)
+# also for Python
+(cd $TARGETHTMLDIR/libpython/ ; for myfile in `ls *.html` ; do sed -i -e "s:<hr class=\"header\">:<hr class=\"header\"><p style=\"border\:3px; border-style\:solid; border-color\:#FF2121; padding\: 1em;\">Note\: This document is for an older version of GRASS GIS that will be discontinued soon. You should upgrade, and read the <a href=\"../../../grass-stable/manuals/libpython/$myfile\">current Python manual page</a>.</p>:g" $myfile ; done)
+
+
 # clean wxGUI sphinx manual etc
 (cd $GRASSBUILDDIR/ ; $MYMAKE cleansphinx)
 
@@ -237,7 +245,9 @@ echo "Written to: $TARGETDIR"
 (cd ~/src/grass$GMAJOR-addons/; git checkout grass$GMAJOR; git pull origin grass$GMAJOR)
 # compile addons
 cd $GRASSBUILDDIR
-sh ~/cronjobs/compile_addons_git.sh ~/src/grass$GMAJOR-addons/src/ \
+sh ~/cronjobs/compile_addons_git.sh $GMAJOR \
+   $GMINOR \
+   ~/src/grass$GMAJOR-addons/src/ \
    ~/src/$BRANCH/dist.$ARCH/ \
    ~/.grass$GMAJOR/addons \
    ~/src/$BRANCH/bin.$ARCH/grass$VERSION \
@@ -255,8 +265,12 @@ for dir in `find ~/.grass$GMAJOR/addons -maxdepth 1 -type d`; do
         fi
     fi
 done
-sh ~/cronjobs/grass-addons-index.sh $GMAJOR $GMINOR $TARGETHTMLDIR/addons/
+sh ~/cronjobs/grass-addons-index.sh $GMAJOR $GMINOR $GPATCH $TARGETHTMLDIR/addons/
 chmod -R a+r,g+w $TARGETHTMLDIR 2> /dev/null
+# inject G8.x new version hint in a red box: into index.html and all addon manual pages
+(cd $TARGETHTMLDIR/addons/ ; sed -i -e "s: Addons Manual pages</h2>: Addons Manual pages</h2><p style=\"border\:3px; border-style\:solid; border-color\:#BC1818; padding\: 1em;\">Note\: This addon documentation is for an older version of GRASS GIS that will be discontinued soon. You should upgrade your GRASS GIS installation, and read the <a href=\"../../../grass-stable/manuals/addons/index.html\">current addon manual page</a>.</p>:g" index.html)
+(cd $TARGETHTMLDIR/addons/ ; for myfile in `ls *.html` ; do sed -i -e "s:<hr class=\"header\">:<hr class=\"header\"><p style=\"border\:3px; border-style\:solid; border-color\:#BC1818; padding\: 1em;\">Note\: This addon document is for an older version of GRASS GIS that will be discontinued soon. You should upgrade your GRASS GIS installation, and read the <a href=\"../../../grass-stable/manuals/addons/$myfile\">current addon manual page</a>.</p>:g" $myfile ; done)
+
 
 # cp logs from ~/.grass$GMAJOR/addons/logs/
 mkdir -p $TARGETMAIN/addons/grass$GMAJOR/logs/
@@ -265,6 +279,14 @@ cp -p ~/.grass$GMAJOR/addons/logs/* $TARGETMAIN/addons/grass$GMAJOR/logs/
 # generate addons module.xml file (required for g.extension module)
 ~/src/$BRANCH/bin.$ARCH/grass$VERSION --tmp-location EPSG:4326 --exec ~/cronjobs/build-xml.py --build ~/.grass$GMAJOR/addons
 cp ~/.grass$GMAJOR/addons/modules.xml $TARGETMAIN/addons/grass$GMAJOR/modules.xml
+
+# regenerate keywords.html file with addons modules keywords
+export ARCH
+export ARCH_DISTDIR=$GRASSBUILDDIR/dist.$ARCH
+export GISBASE=$ARCH_DISTDIR
+export VERSION_NUMBER=$DOTVERSION
+python3 $GRASSBUILDDIR/man/build_keywords.py $TARGETMAIN/grass$GMAJOR$GMINOR/manuals/ $TARGETMAIN/grass$GMAJOR$GMINOR/manuals/addons/
+unset ARCH ARCH_DISTDIR GISBASE VERSION_NUMBER
 
 ############################################
 # create sitemaps to expand the hugo sitemap

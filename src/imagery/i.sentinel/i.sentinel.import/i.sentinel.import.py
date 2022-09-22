@@ -14,134 +14,134 @@
 #
 #############################################################################
 
-#%Module
-#% description: Imports Sentinel satellite data downloaded from Copernicus Open Access Hub using i.sentinel.download.
-#% keyword: imagery
-#% keyword: satellite
-#% keyword: Sentinel
-#% keyword: import
-#%end
-#%option G_OPT_M_DIR
-#% key: input
-#% description: Name of input directory with downloaded Sentinel data
-#% required: yes
-#%end
-#%option G_OPT_M_DIR
-#% key: unzip_dir
-#% description: Name of directory into which Sentinel zip-files are extracted (default=input)
-#% required: no
-#%end
-#%option
-#% key: pattern
-#% description: Band name pattern to import
-#% guisection: Filter
-#%end
-#%option
-#% key: pattern_file
-#% description: File name pattern to import
-#% guisection: Filter
-#%end
-#%option
-#% key: extent
-#% type: string
-#% required: no
-#% multiple: no
-#% options: input,region
-#% answer: input
-#% description: Output raster map extent
-#% descriptions: region;extent of current region;input;extent of input map
-#% guisection: Filter
-#%end
-#%option
-#% key: memory
-#% type: integer
-#% required: no
-#% multiple: no
-#% label: Maximum memory to be used (in MB)
-#% description: Cache size for raster rows
-#% answer: 300
-#%end
-#%option G_OPT_F_OUTPUT
-#% key: register_output
-#% description: Name for output file to use with t.register
-#% required: no
-#%end
-#%option G_OPT_M_DIR
-#% key: metadata
-#% description: Name of directory into which Sentinel metadata json dumps are saved
-#% required: no
-#%end
-#%option
-#% key: cloud_area_threshold
-#% description: Threshold above which areas of clouds and/or cloud shadows will be masked (in hectares)
-#% type: double
-#% required: no
-#% answer: 1
-#%end
-#%option
-#% key: cloud_probability_threshold
-#% description: Minimum cloud probability for pixels to be masked
-#% type: integer
-#% required: no
-#% options: 0-100
-#% answer: 65
-#%end
-#%option
-#% key: cloud_output
-#% type: string
-#% required: no
-#% multiple: no
-#% options: vector,raster
-#% answer: vector
-#% label: Create cloud mask as raster or vector map
-#%end
-#%flag
-#% key: r
-#% description: Reproject raster data using r.import if needed
-#% guisection: Settings
-#%end
-#%flag
-#% key: l
-#% description: Link raster data instead of importing
-#% guisection: Settings
-#%end
-#%flag
-#% key: o
-#% description: Override projection check (use current location's projection)
-#% guisection: Settings
-#%end
-#%flag
-#% key: c
-#% description: Import cloud masks
-#% guisection: Settings
-#%end
-#%flag
-#% key: s
-#% description: Import cloud shadow masks
-#% guisection: Settings
-#%end
-#%flag
-#% key: n
-#% description: Do not unzip SAFE-files if they are already extracted
-#% guisection: Settings
-#%end
-#%flag
-#% key: p
-#% description: Print raster data to be imported and exit
-#% guisection: Print
-#%end
-#%flag
-#% key: j
-#% description: Write meta data json for each band to LOCATION/MAPSET/cell_misc/BAND/description.json
-#% guisection: Print
-#%end
-#%rules
-#% exclusive: -l,-r,-p
-#% exclusive: -o,-r
-#% exclusive: extent,-l
-#% exclusive: metadata,-j
-#% requires: -s,-c
-#%end
+# %Module
+# % description: Imports Sentinel satellite data downloaded from Copernicus Open Access Hub using i.sentinel.download.
+# % keyword: imagery
+# % keyword: satellite
+# % keyword: Sentinel
+# % keyword: import
+# %end
+# %option G_OPT_M_DIR
+# % key: input
+# % description: Name of input directory with downloaded Sentinel data
+# % required: yes
+# %end
+# %option G_OPT_M_DIR
+# % key: unzip_dir
+# % description: Name of directory into which Sentinel zip-files are extracted (default=input)
+# % required: no
+# %end
+# %option
+# % key: pattern
+# % description: Band name pattern to import
+# % guisection: Filter
+# %end
+# %option
+# % key: pattern_file
+# % description: File name pattern to import
+# % guisection: Filter
+# %end
+# %option
+# % key: extent
+# % type: string
+# % required: no
+# % multiple: no
+# % options: input,region
+# % answer: input
+# % description: Output raster map extent
+# % descriptions: region;extent of current region;input;extent of input map
+# % guisection: Filter
+# %end
+# %option
+# % key: memory
+# % type: integer
+# % required: no
+# % multiple: no
+# % label: Maximum memory to be used (in MB)
+# % description: Cache size for raster rows
+# % answer: 300
+# %end
+# %option G_OPT_F_OUTPUT
+# % key: register_output
+# % description: Name for output file to use with t.register
+# % required: no
+# %end
+# %option G_OPT_M_DIR
+# % key: metadata
+# % description: Name of directory into which Sentinel metadata json dumps are saved
+# % required: no
+# %end
+# %option
+# % key: cloud_area_threshold
+# % description: Threshold above which areas of clouds and/or cloud shadows will be masked (in hectares)
+# % type: double
+# % required: no
+# % answer: 1
+# %end
+# %option
+# % key: cloud_probability_threshold
+# % description: Minimum cloud probability for pixels to be masked
+# % type: integer
+# % required: no
+# % options: 0-100
+# % answer: 65
+# %end
+# %option
+# % key: cloud_output
+# % type: string
+# % required: no
+# % multiple: no
+# % options: vector,raster
+# % answer: vector
+# % label: Create cloud mask as raster or vector map
+# %end
+# %flag
+# % key: r
+# % description: Reproject raster data using r.import if needed
+# % guisection: Settings
+# %end
+# %flag
+# % key: l
+# % description: Link raster data instead of importing
+# % guisection: Settings
+# %end
+# %flag
+# % key: o
+# % description: Override projection check (use current location's projection)
+# % guisection: Settings
+# %end
+# %flag
+# % key: c
+# % description: Import cloud masks
+# % guisection: Settings
+# %end
+# %flag
+# % key: s
+# % description: Import cloud shadow masks
+# % guisection: Settings
+# %end
+# %flag
+# % key: n
+# % description: Do not unzip SAFE-files if they are already extracted
+# % guisection: Settings
+# %end
+# %flag
+# % key: p
+# % description: Print raster data to be imported and exit
+# % guisection: Print
+# %end
+# %flag
+# % key: j
+# % description: Write meta data json for each band to LOCATION/MAPSET/cell_misc/BAND/description.json
+# % guisection: Print
+# %end
+# %rules
+# % exclusive: -l,-r,-p
+# % exclusive: -o,-r
+# % exclusive: extent,-l
+# % exclusive: metadata,-j
+# % requires: -s,-c
+# %end
 
 import os
 import sys
@@ -175,6 +175,8 @@ class SentinelImporter(object):
         if not os.path.exists(unzip_dir):
             gs.fatal(_("Directory <{}> does not exist").format(unzip_dir))
 
+        self._projection_units_meters = self._check_location_projection_meters()
+
     def __del__(self):
         # remove temporary maps
         for map in self._map_list:
@@ -199,6 +201,13 @@ class SentinelImporter(object):
                 shutil.rmtree(dirpath)
             except OSError:
                 pass
+
+    def _check_location_projection_meters(self):
+        units = gs.parse_command("g.proj", flags="g")["units"]
+        if units != "meters" and units != "Meters":
+            return False
+        else:
+            return True
 
     def filter(self, pattern=None):
         if pattern:
@@ -259,8 +268,8 @@ class SentinelImporter(object):
         if len(safes) < 1:
             gs.fatal(
                 _(
-                    "Nothing found to import. Please check input and pattern_file options."
-                )
+                    "No Sentinel files found to import in directory <{}>. Please check input and pattern_file options."
+                ).format(self.unzip_dir)
             )
 
         for safe in safes:
@@ -287,8 +296,9 @@ class SentinelImporter(object):
             if reproject:
                 module = "r.import"
                 self._args["resample"] = "bilinear"
-                self._args["resolution"] = "value"
                 self._args["extent"] = options["extent"]
+                if self._projection_units_meters is True:
+                    self._args["resolution"] = "value"
             else:
                 module = "r.in.gdal"
                 self._args["flags"] = "o" if override else None
@@ -352,10 +362,27 @@ class SentinelImporter(object):
     def _map_name(filename):
         return os.path.splitext(os.path.basename(filename))[0]
 
+    def _extract_semantic_label(self, map_name):
+        semantic_label = None
+        try:
+            semantic_label = re.match(
+                r".*_B([0-18][0-9A]).*|.*_([S][C][L])_.*", map_name
+            ).groups()
+            semantic_label = (
+                semantic_label[0] if semantic_label[0] else semantic_label[1]
+            )
+            semantic_label = semantic_label.lstrip("0")
+            semantic_label = "S2_{}".format(semantic_label)
+        except AttributeError:
+            gs.warning(
+                _("Unable to determine band reference for <{}>").format(map_name)
+            )
+        return semantic_label
+
     def _import_file(self, filename, module, args):
         mapname = self._map_name(filename)
         gs.message(_("Processing <{}>...").format(mapname))
-        if module == "r.import":
+        if module == "r.import" and self._projection_units_meters is True:
             self._args["resolution_value"] = self._raster_resolution(filename)
         try:
             gs.run_command(module, input=filename, output=mapname, **self._args)
@@ -434,8 +461,9 @@ class SentinelImporter(object):
                     )
                 )
                 if reproject:
-                    self._args["resolution_value"] = self._raster_resolution(f)
                     self._args["resample"] = "bilinear"
+                    if self._projection_units_meters is True:
+                        self._args["resolution_value"] = self._raster_resolution(f)
                     gs.run_command(
                         "r.import", input=f, output=clouds_imported, **self._args
                     )
@@ -457,10 +485,11 @@ class SentinelImporter(object):
                             "_".join([items[5], items[2], "SCL_20m.jp2"])
                         )
                         if reproject:
-                            self._args["resolution_value"] = self._raster_resolution(
-                                shadow_file[0]
-                            )
                             self._args["resample"] = "nearest"
+                            if self._projection_units_meters is True:
+                                self._args[
+                                    "resolution_value"
+                                ] = self._raster_resolution(shadow_file[0])
                             gs.run_command(
                                 "r.import",
                                 input=shadow_file,
@@ -499,17 +528,27 @@ class SentinelImporter(object):
                 gs.use_temp_region()
                 gs.run_command("g.region", raster=mask_selected)
 
-                # Cleaning small patches
-                try:
-                    gs.run_command(
-                        "r.reclass.area",
-                        input=mask_selected,
-                        output=mask_cleaned,
-                        value=area_threshold,
-                        mode="greater",
+                # Cleaning small patches, only works for non latlong locations
+                if self._projection_units_meters is True:
+                    try:
+                        gs.run_command(
+                            "r.reclass.area",
+                            input=mask_selected,
+                            output=mask_cleaned,
+                            value=area_threshold,
+                            mode="greater",
+                        )
+                    except Exception as e:
+                        pass  # error already printed
+                else:
+                    gs.warning(
+                        _(
+                            "Location projection units is not meters. "
+                            "Removing small cloud/shadow areas using "
+                            "the cloud_area_threshold parameter is skipped."
+                        )
                     )
-                except Exception as e:
-                    pass  # error already printed
+                    mask_cleaned = mask_selected
 
                 # Extract & Label clouds (and shadows)
                 gs.run_command("r.null", map=mask_cleaned, setnull="0")
@@ -874,7 +913,7 @@ class SentinelImporter(object):
                     continue
 
                 timestamp = meta["timestamp"]
-                timestamp_str = timestamp.strftime("%-d %b %Y %H:%M:%S.%f")
+                timestamp_str = timestamp.strftime("%d %b %Y %H:%M:%S.%f")
                 descr_list = []
                 for dkey in meta.keys():
                     if dkey != "timestamp":
@@ -902,14 +941,19 @@ class SentinelImporter(object):
                 )
                 if flags["j"] and not os.path.isdir(json_standard_folder):
                     os.makedirs(json_standard_folder)
-                for band in bands:
-                    gs.run_command(
-                        "r.support",
-                        map=map_name,
-                        source1=ip,
-                        source2=img_file,
-                        history=descr,
+                support_args = {
+                    "map": map_name,
+                    "source1": ip,
+                    "source2": img_file,
+                    "history": descr,
+                }
+                # Band references/semantic labels available from GRASS GIS 8.0.0 onwards
+                if float(gs.version()["version"][0:3]) >= 7.9:
+                    support_args["semantic_label"] = self._extract_semantic_label(
+                        map_name
                     )
+                for band in bands:
+                    gs.run_command("r.support", **support_args)
                     gs.run_command("r.timestamp", map=map_name, date=timestamp_str)
                     if flags["j"]:
                         metadatajson = os.path.join(
@@ -934,7 +978,6 @@ class SentinelImporter(object):
 
         if not ip_timestamp:
             gs.warning(_("Unable to determine timestamps. No metadata file found"))
-        has_band_ref = float(gs.version()["version"][0:3]) >= 7.9
         sep = "|"
         with open(filename, "w") as fd:
             for img_file in self.files:
@@ -948,22 +991,17 @@ class SentinelImporter(object):
                 fd.write(
                     "{img}{sep}{ts}".format(img=map_name, sep=sep, ts=timestamp_str)
                 )
-                if has_band_ref:
-                    try:
-                        band_ref = re.match(
-                            r".*_B([0-18][0-9A]).*|.*_([S][C][L])_.*", map_name
-                        ).groups()
-                        band_ref = band_ref[0] if band_ref[0] else band_ref[1]
-                        band_ref = band_ref.lstrip("0")
-                    except AttributeError:
-                        gs.warning(
-                            _("Unable to determine band reference for <{}>").format(
-                                map_name
-                            )
-                        )
+                # Band references/semantic labels available from GRASS GIS 8.0.0 onwards
+                if float(gs.version()["version"][0:3]) >= 7.9:
+                    semantic_label = self._extract_semantic_label(map_name)
+                    if semantic_label is None:
                         continue
-                    fd.write("{sep}{br}".format(sep=sep, br="S2_{}".format(band_ref)))
-                fd.write(os.linesep)
+                    fd.write(
+                        "{sep}{semantic_label}".format(
+                            sep=sep, semantic_label=semantic_label
+                        )
+                    )
+                fd.write("\n")
 
 
 def main():

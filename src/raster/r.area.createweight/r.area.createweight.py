@@ -19,162 +19,162 @@
 #               for details.
 """
 
-#%module
-#% description: Create a dasymetric weighting layer with Random Forest
-#% keyword:raster
-#% keyword:statistics
-#% keyword:density
-#% keyword:dasymetry
-#% keyword:resample
-#%end
-#%option G_OPT_V_MAP
-#% key: vector
-#% label: Vector with spatial units
-#% description: Polygon vector containing unique ID and response variable in the attribute table
-#% required : yes
-#% guisection: Required inputs
-#% guidependency:vector_layer,id,response_variable
-#%end
-#%option G_OPT_V_FIELD
-#% key: vector_layer
-#% label: Layer number or name
-#% required : yes
-#% guisection: Required inputs
-#% answer:1
-#% guidependency:id,response_variable
-#%end
-#%option G_OPT_DB_COLUMN
-#% key: id
-#% label: Name of the column containing unique ID of spatial units
-#% required : yes
-#% guisection: Required inputs
-#%end
-#%option G_OPT_DB_COLUMN
-#% key: response_variable
-#% label: Name of the column containing response variable
-#% description: Format: All values must be >0
-#% required : yes
-#% guisection: Required inputs
-#%end
-#%option G_OPT_R_INPUT
-#% key: basemap_a
-#% type: string
-#% label: Input raster 1
-#% description: E.g. Land cover, Land use, morphological areas...
-#% required : yes
-#% guisection: Required inputs
-#%end
-#%option G_OPT_R_INPUT
-#% key: basemap_b
-#% type: string
-#% label: Input raster 2 (optional)
-#% description: E.g. Land cover, Land use, morphological areas...
-#% required : no
-#% guisection: Optional inputs
-#%end
-#%option G_OPT_R_INPUT
-#% key: distance_to
-#% type: string
-#% label: Input distance raster (optional)
-#% description: Distance to zones of interest
-#% required : no
-#% guisection: Optional inputs
-#%end
-#%option
-#% key: tile_size
-#% key_desc: value
-#% type: Integer
-#% label: Spatial resolution of output weighting layer
-#% description: (in metres)
-#% required : yes
-#% guisection: Outputs
-#%end
-#%option G_OPT_R_OUTPUT
-#% key: output_weight
-#% description: Output weighting layer name
-#% required: yes
-#% guisection: Outputs
-#% answer:weighted_layer
-#%end
-#%option G_OPT_V_OUTPUT
-#% key: output_units
-#% description: Name for output vector gridded spatial units
-#% required: yes
-#% guisection: Outputs
-#% answer:gridded_spatial_units
-#%end
-#%option G_OPT_F_OUTPUT
-#% key: plot
-#% description: Name for output plot of model feature importances
-#% required: yes
-#% guisection: Outputs
-#%end
-#%option G_OPT_F_OUTPUT
-#% key: log_file
-#% description: Name for output file with log of the random forest run
-#% required: yes
-#% guisection: Outputs
-#%end
-#%option
-#% key: basemap_a_list
-#% type: string
-#% label: Categories of basemap A to be used
-#% description: Format: 1,2,3
-#% required: no
-#% guisection: Optional inputs
-#%end
-#%option
-#% key: basemap_b_list
-#% type: string
-#% label: Categories of basemap B to be used
-#% description: Format: 1,2,3
-#% required: no
-#% guisection: Optional inputs
-#%end
-#%flag
-#% key: a
-#% description: Use class names for basemap A
-#% guisection: Optional inputs
-#%end
-#%flag
-#% key: b
-#% description: Use class names for basemap B
-#% guisection: Optional inputs
-#%end
-#%option G_OPT_M_NPROCS
-#% key: n_jobs
-#% type: integer
-#% description: Number of cores to be used for the parallel process
-#% required : yes
-#% guisection: Required inputs
-#% answer: 1
-#%end
-#%flag
-#% key: c
-#% description: Keep all covariates in the final model
-#% guisection: Feature selection and tuning
-#%end
-#%flag
-#% key: f
-#% description: Include detailed results of grid search cross-validation
-#% guisection: Feature selection and tuning
-#%end
-#%option
-#% key: kfold
-#% type: integer
-#% label: Number of k-fold cross-validation for grid search parameter optimization
-#% description: Format: Must have a value > 2 and < N spatial units
-#% required: no
-#% guisection: Feature selection and tuning
-#% answer: 5
-#%end
-#%option
-#% key: param_grid
-#% type: string
-#% description: Python dictionary of customized tunegrid for sklearn RandomForestRegressor
-#% required: no
-#% guisection: Feature selection and tuning
-#%end
+# %module
+# % description: Create a dasymetric weighting layer with Random Forest
+# % keyword:raster
+# % keyword:statistics
+# % keyword:density
+# % keyword:dasymetry
+# % keyword:resample
+# %end
+# %option G_OPT_V_MAP
+# % key: vector
+# % label: Vector with spatial units
+# % description: Polygon vector containing unique ID and response variable in the attribute table
+# % required : yes
+# % guisection: Required inputs
+# % guidependency:vector_layer,id,response_variable
+# %end
+# %option G_OPT_V_FIELD
+# % key: vector_layer
+# % label: Layer number or name
+# % required : yes
+# % guisection: Required inputs
+# % answer:1
+# % guidependency:id,response_variable
+# %end
+# %option G_OPT_DB_COLUMN
+# % key: id
+# % label: Name of the column containing unique ID of spatial units
+# % required : yes
+# % guisection: Required inputs
+# %end
+# %option G_OPT_DB_COLUMN
+# % key: response_variable
+# % label: Name of the column containing response variable
+# % description: Format: All values must be >0
+# % required : yes
+# % guisection: Required inputs
+# %end
+# %option G_OPT_R_INPUT
+# % key: basemap_a
+# % type: string
+# % label: Input raster 1
+# % description: E.g. Land cover, Land use, morphological areas...
+# % required : yes
+# % guisection: Required inputs
+# %end
+# %option G_OPT_R_INPUT
+# % key: basemap_b
+# % type: string
+# % label: Input raster 2 (optional)
+# % description: E.g. Land cover, Land use, morphological areas...
+# % required : no
+# % guisection: Optional inputs
+# %end
+# %option G_OPT_R_INPUT
+# % key: distance_to
+# % type: string
+# % label: Input distance raster (optional)
+# % description: Distance to zones of interest
+# % required : no
+# % guisection: Optional inputs
+# %end
+# %option
+# % key: tile_size
+# % key_desc: value
+# % type: Integer
+# % label: Spatial resolution of output weighting layer
+# % description: (in metres)
+# % required : yes
+# % guisection: Outputs
+# %end
+# %option G_OPT_R_OUTPUT
+# % key: output_weight
+# % description: Output weighting layer name
+# % required: yes
+# % guisection: Outputs
+# % answer:weighted_layer
+# %end
+# %option G_OPT_V_OUTPUT
+# % key: output_units
+# % description: Name for output vector gridded spatial units
+# % required: yes
+# % guisection: Outputs
+# % answer:gridded_spatial_units
+# %end
+# %option G_OPT_F_OUTPUT
+# % key: plot
+# % description: Name for output plot of model feature importances
+# % required: yes
+# % guisection: Outputs
+# %end
+# %option G_OPT_F_OUTPUT
+# % key: log_file
+# % description: Name for output file with log of the random forest run
+# % required: yes
+# % guisection: Outputs
+# %end
+# %option
+# % key: basemap_a_list
+# % type: string
+# % label: Categories of basemap A to be used
+# % description: Format: 1,2,3
+# % required: no
+# % guisection: Optional inputs
+# %end
+# %option
+# % key: basemap_b_list
+# % type: string
+# % label: Categories of basemap B to be used
+# % description: Format: 1,2,3
+# % required: no
+# % guisection: Optional inputs
+# %end
+# %flag
+# % key: a
+# % description: Use class names for basemap A
+# % guisection: Optional inputs
+# %end
+# %flag
+# % key: b
+# % description: Use class names for basemap B
+# % guisection: Optional inputs
+# %end
+# %option G_OPT_M_NPROCS
+# % key: n_jobs
+# % type: integer
+# % description: Number of cores to be used for the parallel process
+# % required : yes
+# % guisection: Required inputs
+# % answer: 1
+# %end
+# %flag
+# % key: c
+# % description: Keep all covariates in the final model
+# % guisection: Feature selection and tuning
+# %end
+# %flag
+# % key: f
+# % description: Include detailed results of grid search cross-validation
+# % guisection: Feature selection and tuning
+# %end
+# %option
+# % key: kfold
+# % type: integer
+# % label: Number of k-fold cross-validation for grid search parameter optimization
+# % description: Format: Must have a value > 2 and < N spatial units
+# % required: no
+# % guisection: Feature selection and tuning
+# % answer: 5
+# %end
+# %option
+# % key: param_grid
+# % type: string
+# % description: Python dictionary of customized tunegrid for sklearn RandomForestRegressor
+# % required: no
+# % guisection: Feature selection and tuning
+# %end
 # Import standard python libraries
 import os
 import sys
@@ -202,23 +202,6 @@ import matplotlib.pyplot as plt
 from ast import literal_eval
 from copy import deepcopy
 
-# Import Pandas library (View and manipulation of tables)
-# Still required for selecting in dataframes based on column names
-try:
-    import pandas as pd
-except:
-    gscript.fatal(_("Pandas is not installed"))
-
-# Import sklearn libraries
-try:
-    from sklearn.ensemble import RandomForestRegressor
-    from sklearn.feature_selection import SelectFromModel
-    from sklearn.model_selection import GridSearchCV
-except:
-    gscript.fatal(
-        _("Scikit-learn 0.24 or newer is not installed (python3-scikit-learn)")
-    )
-
 # Use a non-interactive backend: prevent the figure from popping up
 matplotlib.use("Agg")
 
@@ -227,6 +210,29 @@ matplotlib.use("Agg")
 TMP_MAPS = []  # Maps to cleanup
 TMP_CSV = []  # Csv to cleanup
 TMP_VECT = []  # Vector to cleanup
+
+
+def lazy_import():
+    """Lazy import py packages due compilation error on OS MS Windows
+    (missing py packages)
+    """
+    # Import Pandas library (View and manipulation of tables)
+    # Still required for selecting in dataframes based on column names
+    global pd, RandomForestRegressor, SelectFromModel, GridSearchCV
+    try:
+        import pandas as pd
+    except ModuleNotFoundError:
+        gscript.fatal(_("Pandas is not installed"))
+
+    # Import sklearn libraries
+    try:
+        from sklearn.ensemble import RandomForestRegressor
+        from sklearn.feature_selection import SelectFromModel
+        from sklearn.model_selection import GridSearchCV
+    except ModuleNotFoundError:
+        gscript.fatal(
+            _("Scikit-learn 0.24 or newer is not installed (python3-scikit-learn)")
+        )
 
 
 def cleanup():
@@ -970,6 +976,7 @@ def RandomForest(weighting_layer_name, vector, id):
 def main():
     start_time = time.ctime()
     options, flags = gscript.parser()
+    lazy_import()
     gscript.use_temp_region()  # define use of temporary regions
 
     ## Create global variables
