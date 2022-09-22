@@ -96,6 +96,7 @@
 
 from __future__ import print_function
 
+import html
 import sys
 import os
 import re
@@ -355,7 +356,7 @@ def get_authors_from_documentation(text):
     authors = []
     feature_heading = None
     for line in raw_author_lines:
-        line = line.strip()  # strip after HTML tag strip
+        line = html.unescape(line.strip())  # strip after HTML tag strip
         if not line:
             continue
         institute = None
@@ -385,13 +386,15 @@ def get_authors_from_documentation(text):
             names = name.split(" and ", 1)
         elif " &amp; " in name:
             names = name.split(" &amp; ", 1)
+        elif " & " in name:
+            names = name.split(" & ", 1)
         else:
             names = [name]
         for name in names:
             # drop academic titles from name
             for title in ["Dr. ", "Prof. "]:
                 if name.startswith(title):
-                    name = name[len(title) :]
+                    name = name[len(title):]
             authors.append(
                 {
                     "name": name,
@@ -625,7 +628,7 @@ def print_cff(citation):
             else:
                 print("  - type:", reference["type"])
             print("    title:", reference["title"])
-            for key, value in reference.iteritems():
+            for key, value in reference.items():
                 if key in ["scope", "type", "title"]:
                     continue  # already handled
                 # TODO: add general serialization to YAML
@@ -639,7 +642,7 @@ def print_cff(citation):
                             print(
                                 "      - family-names: {family-names}".format(**author)
                             )
-                        for akey, avalue in author.iteritems():
+                        for akey, avalue in author.items():
                             if akey == "name":
                                 continue
                             print("        {akey}: {avalue}".format(**locals()))
