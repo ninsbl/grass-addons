@@ -394,7 +394,7 @@ def get_authors_from_documentation(text):
             # drop academic titles from name
             for title in ["Dr. ", "Prof. "]:
                 if name.startswith(title):
-                    name = name[len(title):]
+                    name = name[len(title) :]
             authors.append(
                 {
                     "name": name,
