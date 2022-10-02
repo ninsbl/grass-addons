@@ -199,6 +199,7 @@ def get_datetime_from_documentation(text):
     datetime_capture = r"^  (Latest change: )(.*)( in commit: ).*"
     match = re.search(datetime_capture, text, re.MULTILINE | re.DOTALL | re.IGNORECASE)
     print(match)
+
     if match:
         date_format = "%A %b %d %H:%M:%S %Y"
     else:
