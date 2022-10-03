@@ -195,11 +195,11 @@ def get_datetime_from_documentation(text):
     >>> get_datetime_from_documentation(text)
     datetime.datetime(2022, 9, 18, 23, 55, 9)
     """
-    print(text)
+    gs.warning(text)
 
     datetime_capture = r"^  (Latest change: )(.*)( in commit: ).*"
     match = re.search(datetime_capture, text, re.MULTILINE | re.DOTALL | re.IGNORECASE)
-    print(match)
+    gs.warning(match)
 
     if match:
         date_format = "%A %b %d %H:%M:%S %Y"
@@ -335,13 +335,13 @@ def get_authors_from_documentation(text):
     # HTML tags or section name can theoretically be different case.
     # The "last changed" part might be missing.
     # The i and em could be exchanged.
-    print(text)
+    gs.warning(text)
     author_section_capture = r"(<h2>.*AUTHOR.*</h2>)(.*)(<h2>.*SOURCE CODE.*</h2>)"
     match = re.search(
         author_section_capture, text, re.MULTILINE | re.DOTALL | re.IGNORECASE
     )
 
-    print(match)
+    gs.warning(match)
     if match:
         author_section = match.group(2)
     else:
