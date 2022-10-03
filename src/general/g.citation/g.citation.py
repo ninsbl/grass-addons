@@ -196,6 +196,7 @@ def get_datetime_from_documentation(text):
     datetime.datetime(2022, 9, 18, 23, 55, 9)
     """
     print(text)
+
     datetime_capture = r"^  (Latest change: )(.*)( in commit: ).*"
     match = re.search(datetime_capture, text, re.MULTILINE | re.DOTALL | re.IGNORECASE)
     print(match)
