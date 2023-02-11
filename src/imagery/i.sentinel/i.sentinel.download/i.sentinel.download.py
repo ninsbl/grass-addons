@@ -149,7 +149,7 @@
 # %end
 # %flag
 # % key: l
-# % description: List filtered products and exit
+# % description: Print a list of filtered products to stdout
 # % guisection: Print
 # %end
 # %flag
@@ -1216,22 +1216,22 @@ def main():
     except Exception as e:
         gs.fatal(_("Unable to connect to {0}: {1}").format(options["datasource"], e))
 
-    if options["footprints"]:
-        downloader.save_footprints(options["footprints"])
-
     if flags["s"]:
         downloader.skip_existing(options["output"], "*.zip")
 
     if flags["l"]:
         downloader.list()
-        return
 
-    downloader.download(
-        options["output"],
-        options["sleep"],
-        int(options["retry"]),
-        options["datasource"],
-    )
+    if options["footprints"]:
+        downloader.save_footprints(options["footprints"])
+
+    if options["output"]:
+        downloader.download(
+            options["output"],
+            options["sleep"],
+            int(options["retry"]),
+            options["datasource"],
+        )
 
     return 0
 
