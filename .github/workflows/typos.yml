@@ -2,10 +2,8 @@
 name: Check spelling with typos
 
 on:
-  push:
-    branches:
-      - grass*
-  pull_request:
+  - push
+  - pull_request
 
 jobs:
   run:
