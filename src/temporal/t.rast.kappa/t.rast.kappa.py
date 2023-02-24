@@ -240,7 +240,7 @@ def main():
     maps = sp.get_registered_maps_as_objects(where, "start_time", None)
     if maps is None:
         gscript.fatal(
-            _("Space time raster dataset {st} seems to be " "empty".format(st=strds))
+            _("Space time raster dataset {st} seems to be empty".format(st=strds))
         )
         return 1
 
@@ -277,7 +277,7 @@ def main():
     if not rkappa:
         fi.close()
 
-    gscript.message(_("All data have analyzed"))
+    gscript.message(_("All data have been analyzed"))
 
 
 if __name__ == "__main__":
