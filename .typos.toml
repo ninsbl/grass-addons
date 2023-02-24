@@ -1,0 +1,69 @@
+[files]
+extend-exclude = ["*.png", "*.po"]
+ignore-hidden = true
+ignore-files = true
+ignore-dot = true
+ignore-vcs = true
+ignore-global = true
+ignore-parent = true
+
+[default]
+binary = false
+check-filename = true
+check-file = true
+unicode = true
+ignore-hex = true
+identifier-leading-digits = false
+locale = "en"
+
+[default.extend-identifiers]
+AddOns = "AddOns"
+
+[default.extend-words]
+addon = "addon"
+addons = "addons"
+lsat = "lsat"
+Linke = "Linke"
+parm = "parm"
+ned = "ned"
+
+[type.py]
+extend-glob = []
+
+[type.py.extend-identifiers]
+NDArray = "NDArray"
+
+[type.py.extend-words]
+
+[type.cert]
+extend-glob = []
+check-file = false
+
+[type.vim]
+extend-glob = []
+
+[type.vim.extend-identifiers]
+windo = "windo"
+
+[type.vim.extend-words]
+
+[type.vimscript]
+extend-glob = []
+
+[type.vimscript.extend-identifiers]
+windo = "windo"
+
+[type.vimscript.extend-words]
+
+[type.lock]
+extend-glob = []
+check-file = false
+
+[type.rust]
+extend-glob = []
+
+[type.rust.extend-identifiers]
+flate2 = "flate2"
+
+[type.rust.extend-words]
+ser = "ser"
