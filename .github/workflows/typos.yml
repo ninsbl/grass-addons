@@ -1,6 +1,11 @@
 ---
 name: Check spelling with typos
-on: [pull_request]
+
+on:
+  push:
+    branches:
+      - grass*
+  pull_request:
 
 jobs:
   run:
