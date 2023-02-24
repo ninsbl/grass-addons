@@ -46,3 +46,17 @@ repos:
       - id: yamllint
         args: [--format, parsable, --strict, -d,
                '{extends: default, rules: {truthy: disable, line-length: {max: 120, allow-non-breakable-words: true}}}']
+  - repo: https://github.com/crate-ci/typos
+    rev: v1.13.12
+    hooks:
+      - id: typos
+        args: []
+        exclude: |
+            (?x)^(
+                src/vector|
+                src/raster|
+                src/imagery|
+                src/general|
+                src/db|
+                src/misc
+            )$
