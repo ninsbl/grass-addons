@@ -154,8 +154,6 @@
 
 
 # ToDo
-# - handle valid range according to: https://docs.unidata.ucar.edu/netcdf-c/current/attribute_conventions.html
-# - add evtl. cleaning of external, temporary files
 # - Adjust region bounds across tracks (pixel alignment may differ between tracks)
 # - Add orphaned pixels
 # - parallelize NC conversion
@@ -170,18 +168,12 @@ import sys
 from collections import OrderedDict
 from datetime import datetime
 from itertools import chain
-# from multiprocessing import Pool
 from pathlib import Path
 from zipfile import ZipFile
 
 import grass.script as gs
 from grass.pygrass.modules import Module, MultiModule, ParallelModuleQueue
-from grass.temporal.datetime_math import (
-    # adjust_datetime_to_granularity,
-    create_suffix_from_datetime,
-    # datetime_to_grass_datetime_string as grass_timestamp,
-)
-# from grass.temporal.temporal_granularity import check_granularity_string
+
 
 S3_SOLAR_FLUX = {
     "S3SL1RBT": {
@@ -470,7 +462,7 @@ DTYPE_TO_GRASS = {
     "float32": "FCELL",
     "uint16": "CELL",
     "uint8": "CELL",
-    "float64": "DCELL",
+    "float64": "FCELL",
 }
 
 OVERWRITE = gs.overwrite()
@@ -500,6 +492,16 @@ def cleanup():
     # remove temporary maps
     if TMP_FILE:
         gs.try_remove(TMP_FILE)
+
+    # Remove external data if mapset uses r.external.out
+    external = gs.parse_key_val(gs.read_command("r.external.out", flags="p"), sep=": ")
+    if "directory" in external:
+        for map_file in Path(external["directory"]).glob(
+            f"{TMP_NAME}_*{external['extension']}"
+        ):
+            if map_file.is_file():
+                map_file.unlink()
+
     # remove temp location
     if TMPLOC:
         gs.try_rmdir(os.path.join(GISDBASE, TMPLOC))
@@ -515,16 +517,9 @@ def cleanup():
             "g.remove", type="vector", name=TMP_REG_NAME, flags="f", quiet=True
         )
 
-
-def create_tmp_location(grass_env=gs.gisenv()):
-    """Create a temporary location"""
-    global GISDBASE, TMPLOC, SRCGISRC
-    GISDBASE = grass_env["GISDBASE"]
-    TMPLOC = gs.append_node_pid("tmp_s3_import_location")
-    if not (Path(GISDBASE) / TMPLOC).exists():
-        gs.run_command("g.proj", flags="c", location=TMPLOC, epsg=4326)
-    SRCGISRC, src_env = gs.create_environment(GISDBASE, TMPLOC, "PERMANENT")
-    return src_env
+    gs.run_command(
+        "g.remove", type="vector", pattern=f"{TMP_NAME}_*", flags="f", quiet=True
+    )
 
 
 def np_as_scalar(var):
@@ -534,6 +529,32 @@ def np_as_scalar(var):
             return str(var)
         return var.item()
     return var
+
+
+def get_dtype_range(np_datatype):
+    """Get information to set the valid data range based on dtype
+    according to:
+    https://docs.unidata.ucar.edu/netcdf-c/current/attribute_conventions.html#valid_range
+    """
+    if np_datatype == "bool":
+        return {"min": 0, "max": 1, "reolution": 1}
+
+    dtype = np.dtype(np_datatype)
+    if not np.issubdtype(dtype, np.floating) and not np.issubdtype(dtype, np.integer):
+        gs.fatal(_("Unsupported data type {}").format(np_datatype))
+
+    # Integer dtypes
+    if "int" in np_datatype:
+        dt_info = np.iinfo(np_datatype)
+        return {"min": dt_info.min, "max": dt_info.max, "resolution": 1}
+
+    # Float dtypes
+    dt_info = np.finfo(np_datatype)
+    return {
+        "min": dt_info.min,
+        "max": dt_info.max,
+        "resolution": 2.0 * dt_info.resolution,
+    }
 
 
 def write_metadata(json_dict, metadatajson):
@@ -567,11 +588,10 @@ def convert_units(np_column, from_u, to_u):
         converted_col = Unit(from_u).convert(np_column, Unit(to_u))
     except ValueError:
         gs.fatal(
-            _(
-                "Warning: Could not convert units from {from_u} to {to_u}.").format(
-                    from_u=from_u, to_u=to_u
-                )
+            _("Warning: Could not convert units from {from_u} to {to_u}.").format(
+                from_u=from_u, to_u=to_u
             )
+        )
         converted_col = np_column
 
     return converted_col
@@ -583,8 +603,35 @@ def extend_region(region_dict, additional_region_dict):
     region_dict["e"] = max(region_dict["e"], additional_region_dict["e"])
     region_dict["s"] = min(region_dict["s"], additional_region_dict["s"])
     region_dict["w"] = min(region_dict["w"], additional_region_dict["w"])
-    # region_dict["nsres"] = (region_dict["nsres"] + additional_region_dict["nsres"]) / 2.0
-    # region_dict["ewres"] = (region_dict["ewres"] + additional_region_dict["ewres"]) / 2.0
+    return region_dict
+
+
+def adjust_region(region_dict):
+    """
+    Adjust region bounds for r.in.xyz (bounds + half resolution)
+    aligned to resolution in ew and ns direction
+    starting from the sw-corner
+    """
+    nsres = int(region_dict["nsres"])
+    ewres = int(region_dict["ewres"])
+    ns_round_to = 10 ** (len(str(nsres)) - len(str(nsres).rstrip("0")))
+    ew_round_to = 10 ** (len(str(ewres)) - len(str(ewres).rstrip("0")))
+    region_dict["s"] = (
+        np.floor((region_dict["s"] - (nsres / 2.0)) / ns_round_to) * ns_round_to
+    )
+    region_dict["w"] = (
+        np.floor((region_dict["w"] - (ewres / 2.0)) / ew_round_to) * ew_round_to
+    )
+    region_dict["n"] = (
+        region_dict["s"]
+        + np.ceil(((region_dict["n"] + (nsres / 2.0) - region_dict["s"]) / nsres))
+        * nsres
+    )
+    region_dict["e"] = (
+        region_dict["w"]
+        + np.ceil(((region_dict["e"] + (ewres / 2.0) - region_dict["w"]) / ewres))
+        * ewres
+    )
     return region_dict
 
 
@@ -610,49 +657,6 @@ def parse_s3_file_name(file_name):
         }
     except ValueError:
         gs.fatal(_("{} is not a supported Sentinel-3 scene").format(str(file_name)))
-
-
-def group_scenes(s3_files, granularity="1 day"):
-    """
-    Group scenes by information from the file name:
-     1. mission ID
-     2. product type
-     3. temporal granule
-     4. duration
-     5. cycle
-     6. relative orbit
-     : param s3_filesv: list of pathlib.Path objects with Sentine1-3 files
-    """
-    groups = {}
-    for sfile in s3_files:
-        s3_name_dict = parse_s3_file_name(sfile.name)
-        group_id = "_".join(
-            [
-                s3_name_dict["mission_id"],
-                options["product_type"][2:],
-                create_suffix_from_datetime(
-                    s3_name_dict["start_time"], granularity
-                ).replace("_", ""),
-                s3_name_dict["duration"],
-                s3_name_dict["cycle"],
-                s3_name_dict["relative_orbit"],
-            ]
-        )
-        if group_id in groups:
-            groups[group_id]["files"].append(sfile)
-            if s3_name_dict["start_time"] < groups[group_id]["start_time"]:
-                groups[group_id]["start_time"] = s3_name_dict["start_time"]
-            if s3_name_dict["end_time"] > groups[group_id]["end_time"]:
-                groups[group_id]["end_time"] = s3_name_dict["end_time"]
-            groups[group_id]["frames"].append(s3_name_dict["frame"])
-        else:
-            groups[group_id] = {
-                "files": [sfile],
-                "start_time": s3_name_dict["start_time"],
-                "end_time": s3_name_dict["end_time"],
-                "frames": [s3_name_dict["frame"]],
-            }
-    return groups
 
 
 def extract_file_info(s3_files, basename=None):
@@ -709,70 +713,25 @@ def extract_file_info(s3_files, basename=None):
     return {basename: result_dict}
 
 
-def adjust_region_env(reg, coords):
-    """Get region bounding box of intersecting area with
-    coordinates aligned to the current region"""
-    coords_min = np.min(coords, axis=0)
-    coords_max = np.max(coords, axis=0)
-
-    diff = coords_max[0:2] / np.array([float(reg["ewres"]), float(reg["nsres"])])
-    coords_max_aligned = diff.astype(int) * np.array(
-        [float(reg["ewres"]), float(reg["nsres"])]
-    )
-
-    diff = coords_min[0:2] / np.array([float(reg["ewres"]), float(reg["nsres"])])
-    coords_min_aligned = diff.astype(int) * np.array(
-        [float(reg["ewres"]), float(reg["nsres"])]
-    )
-
-    new_bounds = {}
-    new_bounds["e"], new_bounds["n"] = tuple(
-        np.min(
-            np.vstack(
-                (coords_max_aligned, np.array([reg["e"], reg["n"]]).astype(float))
-            ),
-            axis=0,
-        ).astype(str)
-    )
-    new_bounds["w"], new_bounds["s"] = tuple(
-        np.max(
-            np.vstack(
-                (coords_min_aligned, np.array([reg["w"], reg["s"]]).astype(float))
-            ),
-            axis=0,
-        ).astype(str)
-    )
-
-    if float(new_bounds["s"]) >= float(new_bounds["n"]) or float(
-        new_bounds["w"]
-    ) >= float(new_bounds["e"]):
-        return None
-
-    compute_env = os.environ.copy()
-    compute_env["GRASS_region"] = gs.region_env(**new_bounds)
-
-    return compute_env
-
-
 def get_geocoding(zip_file, root, geo_bands_dict, region_bounds=None):
     """Get ground control points from NetCDF file"""
     member = str(root / geo_bands_dict["nc_file"])
     nc_file_path = zip_file.extract(member, path=TMP_FILE)
     with Dataset(nc_file_path) as nc_file_open:
         nc_bands = OrderedDict()
-        print(nc_file_open.resolution)
         resolution = nc_file_open.resolution.strip(" ").split(" ")[1:3]
 
         for band_id, band in geo_bands_dict["bands"].items():
             if band not in nc_file_open.variables:
                 gs.fatal(
                     _(
-                        "{s3_file} does not contain a container {container} with band {band}").format(
-                            s3_file=str(Path(nc_file_path).parent.name),
-                            container=geo_bands_dict["nc_file"],
-                            band=", ".join(band),
-                        )
+                        "{s3_file} does not contain a container {container} with band {band}"
+                    ).format(
+                        s3_file=str(Path(nc_file_path).parent.name),
+                        container=geo_bands_dict["nc_file"],
+                        band=", ".join(band),
                     )
+                )
 
             # Add band to dict
             nc_bands[band_id] = nc_file_open[band][:]
@@ -966,7 +925,11 @@ def get_band_metadata(
 
     # Define unit
     unit = nc_variable.units if "units" in band_attrs else None
-    unit = "degree_celsius" if band.band_id.startswith("LST") and module_flags["c"] else unit
+    unit = (
+        "degree_celsius"
+        if band.band_id.startswith("LST") and module_flags["c"]
+        else unit
+    )
     metadata["unit"] = unit
 
     # Define datatype and import method
@@ -990,42 +953,40 @@ def get_band_metadata(
         metadata[time_reference] = metadata[time_reference].isoformat()
     description = json.dumps(metadata, separators=["\n", ": "]).lstrip("{").rstrip("}")
 
-    # Get max and min values
-    if "valid_max" in band_attrs:
+    # Handle offset, scale, and valid data range, see:
+    # https://docs.unidata.ucar.edu/netcdf-c/current/attribute_conventions.html
+    zrange = None
+    if "valid_range" in band_attrs:
+        min_val, max_val = nc_variable.valid_range
+    elif "valid_max" in band_attrs:
         min_val = nc_variable.valid_min
         max_val = nc_variable.valid_max
-        if "scale_factor" in band_attrs:
-            min_val = min_val * nc_variable.scale_factor
-            max_val = max_val * nc_variable.scale_factor
-        if "add_offset" in band_attrs:
+    elif "_FillValue" in band_attrs:
+        data_range = get_dtype_range(datatype)
+        fill_val = nc_variable._FillValue
+        if fill_val > 0:
+            min_val = data_range["min"]
+            max_val = fill_val - data_range["resolution"]
+        elif fill_val < 0:
+            min_val = fill_val + data_range["resolution"]
+            max_val = data_range["max"]
+        else:
+            min_val, max_val = None, None
+    else:
+        min_val, max_val = None, None
+
+    if min_val and max_val:
+        if "add_offset" in band_attrs and min_val and max_val:
             min_val = min_val + nc_variable.add_offset
             max_val = max_val + nc_variable.add_offset
+
+        if "scale_factor" in band_attrs and min_val and max_val:
+            min_val = min_val * nc_variable.scale_factor
+            max_val = max_val * nc_variable.scale_factor
         description += f"\n\nvalid_min: {min_val}\nvalid_max: {max_val}"
-    else:
-        min_val = nc_variable[:].min()
-        max_val = nc_variable[:].max()
+        zrange = [min_val, max_val]
     metadata["description"] = description
 
-    # Define valid input range
-    if "_FillValue" in band_attrs:
-        fill_val = nc_variable._FillValue if "_FillValue" in band_attrs else None
-        if fill_val > 0:
-            zrange = [
-                fill_val - 1 if not min_val else np.max([fill_val - 1, min_val]),
-                max_val,
-            ]
-        else:
-            zrange = [
-                fill_val + 1 if not min_val else np.max([fill_val + 1, min_val]),
-                max_val,
-            ]
-    elif "flag_values" in band_attrs:
-        zrange = [
-            min(nc_variable.flag_values),
-            max(nc_variable.flag_values),
-        ]
-    else:
-        zrange = None
     metadata["zrange"] = zrange
     metadata["support_kwargs"] = {
         "map": mapname,
@@ -1086,16 +1047,7 @@ def write_xyz(tmp_ascii, nc_bands, mask, fmt=None, project=True):
         np_output = np.hstack(
             (np_output, np.ma.masked_where(mask, add_array).compressed()[:, None])
         )
-        print(
-            band,
-            np.min(add_array),
-            np.max(np.ma.masked_where(mask, add_array).compressed()[:, None]),
-        )
-        print(
-            band,
-            np.min(np.ma.masked_where(mask, add_array).compressed()[:, None]),
-            np.max(np.ma.masked_where(mask, add_array).compressed()[:, None]),
-        )
+
     # Write to temporary file
     if Path(tmp_ascii).exists():
         with open(tmp_ascii, "ab") as tmp_ascii_file:
@@ -1104,12 +1056,10 @@ def write_xyz(tmp_ascii, nc_bands, mask, fmt=None, project=True):
         np.savetxt(tmp_ascii, np_output, delimiter=",", fmt=fmt)
 
     stripe_reg = {  #
-        "n": np.ma.max(np_output[:, 1]),  # + (nsres / 2.0),
-        "s": np.ma.min(np_output[:, 1]),  # - (nsres / 2.0),
-        "e": np.ma.max(np_output[:, 0]),  # + (ewres / 2.0),
-        "w": np.ma.min(np_output[:, 0]),  # - (ewres / 2.0),
-        # "nsres": nsres,
-        # "ewres": ewres,
+        "n": np.ma.max(np_output[:, 1]),
+        "s": np.ma.min(np_output[:, 1]),
+        "e": np.ma.max(np_output[:, 0]),
+        "w": np.ma.min(np_output[:, 0]),
     }
     return stripe_reg
 
@@ -1220,8 +1170,8 @@ class S3Product:
 
     def _check_view(self, view):
         if view not in self.available_views:
-            gs.warning(_(
-                "View {} not available for product type {}").format(
+            gs.warning(
+                _("View {} not available for product type {}").format(
                     view, self.product_type
                 )
             )
@@ -1244,8 +1194,8 @@ class S3Product:
         band_objects = {}
         for band in bands:
             if band not in band_types[band_type]:
-                gs.warning(_(
-                    "Band {0} is not available in product_type {1}").format(
+                gs.warning(
+                    _("Band {0} is not available in product_type {1}").format(
                         band, self.product_type
                     )
                 )
@@ -1322,12 +1272,13 @@ class S3Product:
                 if band.full_name not in nc_file_open.variables:
                     gs.fatal(
                         _(
-                            "{s3_file} does not contain a container {container} with band {band}").format(
-                                s3_file=str(root),
-                                container=band.nc_file,
-                                band=", ".join(band.full_name),
-                            )
+                            "{s3_file} does not contain a container {container} with band {band}"
+                        ).format(
+                            s3_file=str(root),
+                            container=band.nc_file,
+                            band=", ".join(band.full_name),
                         )
+                    )
 
                 nc_variable = nc_file_open[band.full_name]
                 # Apply radiance adjustment
@@ -1349,7 +1300,8 @@ class S3Product:
                 if band.radiance_adjustment and module_flags["r"]:
                     # Get solar flux for band
                     metadata[0]["solar_flux"] = band.get_solar_flux(
-                        zip_file, root,
+                        zip_file,
+                        root,
                     )
 
                 if band.exception:
@@ -1461,16 +1413,6 @@ class S3Product:
             if band_id == "solar_zenith":
                 global SUN_ZENITH_ANGLE
                 SUN_ZENITH_ANGLE = map_name
-            # support_kwargs = {
-            #     "map": map_name,
-            #     "title": f"{sun_parameter_array.long_name} from {root}",
-            #     # "history": nc_file_open.history,
-            #     "units": sun_parameter_array.units,
-            #     "source1": sun_parameter_nc.product_name,
-            #     "source2": None,
-            #     # "description": description,
-            #     "semantic_label": f"S3_{sun_parameter_array.standard_name}",
-            # }
             import_modules[band_id] = setup_import_multi_module(
                 tmp_ascii,
                 map_name,
@@ -1479,7 +1421,7 @@ class S3Product:
                 data_type="FCELL",
                 method="mean",
                 solar_flux=None,
-           )
+            )
 
         # Write to temporary file
         sun_region_dict = write_xyz(tmp_ascii, nc_bands, mask, fmt=fmt, project=True)
@@ -1492,6 +1434,7 @@ class S3Product:
 
 class S3Band:
     """Class for properties and methods related to Sentinel-3 bands"""
+
     def __init__(
         self,
         product_type,
@@ -1501,11 +1444,8 @@ class S3Band:
         radiance_adjustment="S3_PN_SLSTR_L1_08",
     ):
         self.band_id = band_id
-        # self.product_type = product_type
-        # self.use_b = use_b
         self.band_type = self._get_band_type(product_type)
         # Need to call in this order
-        # self.view = view
         geometry = self._get_geometry(product_type, use_b)
         self.resolution = S3_GRIDS[product_type][geometry]
         self.suffix = f"{geometry}{view}"
@@ -1565,9 +1505,9 @@ class S3Band:
 
     def _get_exception_band(self, product_type):
         if "exception" in S3_BANDS[self.band_type][product_type][self.band_id]:
-            return S3_BANDS[self.band_type][product_type][self.band_id]["exception"].format(
-                self.band_id, "exception", self.suffix
-            )
+            return S3_BANDS[self.band_type][product_type][self.band_id][
+                "exception"
+            ].format(self.band_id, "exception", self.suffix)
         return None
 
     def _get_solar_flux_dict_for_band(self, product_type):
@@ -1622,15 +1562,16 @@ class S3Band:
         return np_band_array
 
 
-
 def main():
     """Do the main work"""
-    pattern = re.compile(S3_FILE_PATTERN[options["product_type"]])
+    pattern = re.compile(
+        ".*" + S3_FILE_PATTERN[options["product_type"]].replace("*", ".*")
+    )
 
     # check provided input
     s3_files = options["input"].split(",")
     if len(s3_files) == 1:
-        if not re.match(pattern, s3_files[0]):
+        if re.match(pattern, s3_files[0]) is None:
             try:
                 s3_files = (
                     Path(s3_files[0]).read_text(encoding="UTF8").strip().split("\n")
@@ -1650,16 +1591,16 @@ def main():
     for s3_scene in s3_files:
         if not s3_scene.exists():
             gs.fatal(_("Input file <{sn}> not found").format(str(sn=s3_scene)))
-        if re.match(pattern, s3_scene.name):
+        if not re.match(pattern, s3_scene.name):
             gs.fatal(
                 _(
                     "Input <{sn}> is not a supported Sentinel-3 scene for the requested product type <{pt}>"
                 ).format(sn=s3_scene, pt=options["product_type"])
             )
 
-    if flags["f"]:
+    if flags["d"]:
         global DTYPE_TO_GRASS
-        DTYPE_TO_GRASS["float64"] = "FCELL"
+        DTYPE_TO_GRASS["float64"] = "DCELL"
 
     s3_product = S3Product(
         options["product_type"],
@@ -1673,7 +1614,7 @@ def main():
     # Group scenes by mission,
     # groups = group_scenes(s3_files, granularity="1 day")
     if gs.parse_command("g.proj", flags="g")["proj"] == "ll":
-        gs.fatal(_("Running in lonlat location is not supported"))
+        gs.fatal(_("Running in lonlat location is currently not supported"))
 
     nprocs = int(options["nprocs"])
 
@@ -1718,6 +1659,7 @@ def main():
             )
         )
         print("\n".join(chain(*import_result)))
+        cleanup()
         return 0
 
     module_queues = []
@@ -1726,9 +1668,12 @@ def main():
     region_list = []
 
     for s3_file in s3_files:
-        module_list, regs, region_dict = import_s3(s3_file, import_dict, s3_product=s3_product)
+        gs.verbose(_("Preparing scene {} for import").format(s3_file.name))
+        module_list, register_string, region_dict = import_s3(
+            s3_file, import_dict, s3_product=s3_product
+        )
         module_queues.append(module_list)
-        register_strings.update(regs)
+        register_strings.update(register_string)
         region_list.append(region_dict)
         if not region_dicts:
             region_dicts = region_dict.copy()
@@ -1742,19 +1687,30 @@ def main():
     stripe_envs = {}
     for stripe_id, stripe_region in region_dicts.items():
         stripe_env = os.environ.copy()
-        stripe_env["GRASS_REGION"] = gs.region_env(**stripe_region)  # , env=stripe_env)
+        stripe_env["GRASS_REGION"] = gs.region_env(
+            **adjust_region(stripe_region)
+        )  # , env=stripe_env)
         stripe_envs[stripe_id] = stripe_env
 
-    queue = ParallelModuleQueue(nprocs)
-    for solar_parameter in ["solar_azimuth", "solar_zenith"]:  # mq.items():
         compute_env = stripe_envs["sun_parameters"]
-        module_list = []
-        for listed_module in module_queues[0][solar_parameter]:
-            listed_module.env_ = compute_env
-            listed_module.verbose = True
-            module_list.append(listed_module)
-    queue.put(MultiModule(module_list))
 
+    if flags["r"]:
+        gs.verbose(_("Importing solar parameter bands"))
+        queue = ParallelModuleQueue(nprocs)
+        for solar_parameter in ["solar_azimuth", "solar_zenith"]:
+            module_list = []
+            for solar_module in module_queues[0][solar_parameter]:
+                solar_module.env_ = compute_env
+                solar_module.verbose = True
+                module_list.append(solar_module)
+            queue.put(MultiModule(module_list))
+        queue.wait()
+
+    gs.verbose(
+        _("Importing scenes {}").format(
+            "\n" + "\n".join([s3_file.name for s3_file in s3_files])
+        )
+    )
     queue = ParallelModuleQueue(nprocs)
     for band_id, modules in module_queues[0].items():
         if band_id in ["solar_azimuth", "solar_zenith"]:
@@ -1765,12 +1721,17 @@ def main():
             listed_module.env_ = compute_env
             listed_module.verbose = True
             module_list.append(listed_module)
-    queue.put(MultiModule(module_list))
+        queue.put(MultiModule(module_list))
+    queue.wait()
 
     if options["register_output"]:
         # Write t.register file if requested
-        write_register_file(options["register_output"], import_result)
-
+        write_register_file(
+            options["register_output"], "\n".join(register_strings.values())
+        )
+    else:
+        print("\n".join(register_strings.values()))
+    cleanup()
     return 0
 
 
