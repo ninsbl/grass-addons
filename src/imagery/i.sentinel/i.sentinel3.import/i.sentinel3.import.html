@@ -1,31 +1,45 @@
 <h2>DESCRIPTION</h2>
 
-The <em>i.sentinel3.import</em> module allows importing Copernicus Sentinel-3 products
-downloaded by the <em><a href="i.sentinel.download.html">i.sentinel.download</a></em>
-module.
-
+The <em>i.sentinel3.import</em> module allows importing Copernicus Sentinel-3 products.
 <p>
-By default <em>i.sentinel3.import</em> imports all Sentinel-3 scene files found
-in the <b>input</b> directory. The number of scene files can be optionally
-reduced by the <b>pattern</b> option or filtered by modification time using the
-<b>modified_after</b> and/or <b>modified_before</b> option. In the <b>pattern</b>
-option, a regular expression for filtering the file names should be given, e.g.
-"0179_076_100_0900_LN2" for importing only specific tiles.
-<p>
-The <em>Sentinel-3</em> products are provided in different formats. Not all of
-them are currently directly supported by GDAL. Some, like the e.g. the LST products
+The <em>Sentinel-3</em> products types are provided in different formats. Not all of
+them are currently directly supported by GDAL. Some, like the e.g. the SLSTR products
 consist of several netCDF4 files, where geometry and image information are stored in
 different files. Therefore, a GRASS GIS specific import routine has been implemented
 for those formats. This routine imports the data pixel-wise after transforming them
 from WGS84 into the projection of the current LOCATION. <em>r.in.xyz</em> is then
-used to read the coordinates into a GRASS GIS raster map.
-Thus, the <em>the user has to set the computational region extent and
-resolution appropriately, to import the data of interest in the correct resolution</em>.
+used to read the coordinates into a GRASS GIS raster map. Thus, the <em>the user has
+to set the computational region extent, to import the data of interest</em>. The resolution
+is set from the resolution of the inut bands and pixels are alined to that resolution.
+<p>
+Currently, only import of the following <b>product_types</b> is implemented:
+<ul>
+    <!-- <li>S3OL1ERF: OL_1_ERF__ products from Sentinel-3 OLCI</li> -->
+    <li>S3SL1RBT: SL_1_RBT__ products from Sentinel-3 SLSTR</li>
+    <li>S3SL2LST: SL_2_LST__ products from Sentinel-3 SLSTR</li>
+</ul>
+
 
 <p>
-By default, ancillary data and quality flag data are imported as well - as artificial
-bands. Import of those additional data layers can be deactivated using the <b>ancillary_bands</b>
-and <b>quality_bands</b> option.
+All Sentinel-3 scene files provided in the <b>input</b> option are mosaiced
+into one resulting granule with one map for each imported bands. The <b>input</b>
+option accepts either one or many path(s) to Sentinel-3 archives (.zip) separated
+by comma or a textfile with  one Sentinel-3 file per row. The module is designed
+to produce temporally non overlaping mosaics along the tracks of the satellite.
+Input should therefor not mix data from different tracks or sensing periods.
+
+<p>
+Users can provide a custom <b>basename</b>, to which band names are appended.
+Otherwise, the basename is constructed from the input scenes following the
+Sentinel-3 file naming convention. Here, tile id is stripped from the resulting
+basename and start of sensing time is set to start of sensing time of the first
+input scene and end of sensing time is set to the end of the last input scene.
+
+<p>
+Anxillary data and quality flag data can be imported as well using the
+<b>anxillary_bands</b> and <b>flag_bands</b> option. Here, the user has to specify
+the product specific band names or <em>all</em> to imort all available artificial
+bands of the given kind.
 
 <p>
 For each imported band both scene and band specific metadata are written into the map history
@@ -38,9 +52,6 @@ as shown below.
 
 <h2>NOTES</h2>
 
-<p>
-Currently, only import of SL_2_LST__ products from Sentinel-3 SLSTR sensor are supported.
-<p>
 By means of the <b>register_file</b> option <em>i.sentinel3.import</em> allows
 creating a file which can be used to register imported imagery data
 into a space-time raster dateset (STRDS) with
@@ -56,7 +67,7 @@ in JSON format (in the current mapset under <tt>cell_misc</tt>).
 
 <h2>EXAMPLES</h2>
 
-<h3>List Sentinel bands</h3>
+<!-- <h3>List Sentinel bands</h3>
 
 At first, print the list of raster files to be imported with <b>-p</b> flag. For
 each file also product content is printed:
@@ -67,13 +78,13 @@ product=LST basename=S3_LST
 
 ...
 </pre></div>
+-->
 
 <h3>Import Sentinel-3 data</h3>
 Import all Sentinel-3 data found in <i>data</i> directory and store metadata
 as JSON files within the GRASS GIS database directory:
 <div class="code"><pre>
-i.sentinel3.import -a -c -j input=./data/ nprocs=4 modified_before="2021-09-09" \
-product=LST basename=S3_LST
+i.sentinel3.import -a -c -j input=./data/ nprocs=4 product_type=S3SL2LST basename=S3_LST
 </pre></div>
 
 
@@ -81,7 +92,7 @@ product=LST basename=S3_LST
 
 <div class="code"><pre>
 i.sentinel3.import -a -c -j input=./data/ register_output=./data/reg.txt nprocs=4 \
-modified_before="2021-09-09" product=LST basename=S3_LST
+product_type=S3SL2LST basename=S3_LST
 
 # register imported data into existing STRDS
 t.register input=Sentinel_3 file=data/reg.txt
@@ -95,12 +106,6 @@ register file is extended by a third column containg band reference
 information, see the examples below.
 
 <div class="code"><pre>
-# register file produced by stable GRASS GIS 7.8 version
-S3_imp_surface_temperature_20210907T205026|2021-09-07T20:50:26.285902+00:00|2021-09-07T20:53:25.977846+00:00
-S3_imp_surface_temperature_standard_error_20210907T205026|2021-09-07T20:50:26.285902+00:00|2021-09-07T20:53:25.977846+00:00
-S3_imp_confidence_20210907T205026|2021-09-07T20:50:26.285902+00:00|2021-09-07T20:53:25.977846+00:00
-...
-# register file produced by development GRASS GIS 7.9 version
 S3_imp_surface_temperature_20210907T205026|2021-09-07T20:50:26.285902+00:00|2021-09-07T20:53:25.977846+00:00|S3_surface_temperature
 S3_imp_surface_temperature_standard_error_20210907T205026|2021-09-07T20:50:26.285902+00:00|2021-09-07T20:53:25.977846+00:00|S3_surface_temperature_standard_error
 S3_imp_confidence_20210907T205026|2021-09-07T20:50:26.285902+00:00|2021-09-07T20:53:25.977846+00:00|S3_confidence
@@ -129,9 +134,4 @@ The following Python libraries are required
 
 <h2>AUTHOR</h2>
 
-Stefan Blumentrath, <a href="https://www.nina.no/">NINA</a>, Norway
-
-<!--
-<p>
-<i>Last changed: $Date$</i>
--->
+Stefan Blumentrath, Norway
