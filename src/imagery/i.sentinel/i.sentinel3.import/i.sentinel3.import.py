@@ -84,21 +84,12 @@
 # %option G_OPT_M_NPROCS
 # %end
 
-# %option
-# % key: memory
-# % type: integer
-# % required: no
-# % multiple: no
-# % label: Maximum memory to be used (in MB)
-# % description: Cache size for raster rows
-# % answer: 300
-# %end
-
-# %flag
-# % key: a
-# % description: Apply cloud mask before import (can significantly speed up import)
-# % guisection: Settings
-# %end
+# to be implemented
+# # %flag
+# # % key: a
+# # % description: Apply cloud mask before import (can significantly speed up import)
+# # % guisection: Settings
+# # %end
 
 # %flag
 # % key: c
@@ -112,15 +103,16 @@
 # % guisection: Settings
 # %end
 
-# %flag
-# % key: e
-# % description: Import also elevation from geocoding of stripe
-# % guisection: Settings
-# %end
+# to be implemented
+# # %flag
+# # % key: e
+# # % description: Import also elevation from geocoding of stripe
+# # % guisection: Settings
+# # %end
 
 # %flag
-# % key: i
-# % description: Do not interpolate imported bands
+# % key: n
+# % description: Import data at native resolution of the bands (default is use current region)
 # % guisection: Settings
 # %end
 
@@ -131,16 +123,23 @@
 # %end
 
 # %flag
+# % key: k
+# % description: Keep original cell values during interpolation (see: r.fill.stats)
+# % guisection: Settings
+# %end
+
+# %flag
 # % key: o
 # % description: Process oblique view (default is nadir)
 # % guisection: Settings
 # %end
 
-# %flag
-# % key: p
-# % description: Print raster data to be imported and exit
-# % guisection: Print
-# %end
+# to be implemented
+# # %flag
+# # % key: p
+# # % description: Print raster data to be imported and exit
+# # % guisection: Print
+# # %end
 
 # %flag
 # % key: r
@@ -148,13 +147,16 @@
 # % guisection: Settings
 # %end
 
-# %rules
-# % excludes: -p,register_output
-# %end
+# # %rules
+# # % excludes: -p,register_output
+# # %end
 
 
 # ToDo
-# - Adjust region bounds across tracks (pixel alignment may differ between tracks)
+# - implement printing
+# - implement cloud-masking at import
+# - implement elevation import
+# - do not write to temporary file (feed r.in.xyz from stdin)
 # - Add orphaned pixels
 # - parallelize NC conversion
 
@@ -167,13 +169,17 @@ import sys
 
 from collections import OrderedDict
 from datetime import datetime
-from itertools import chain
+# from itertools import chain
 from pathlib import Path
 from zipfile import ZipFile
 
 import grass.script as gs
 from grass.pygrass.modules import Module, MultiModule, ParallelModuleQueue
+from grass.temporal.datetime_math import (
+    datetime_to_grass_datetime_string as grass_timestamp,
+)
 
+S3_SUPPORTED_PRODUCTS = ["S3SL1RBT", "S3SL2LST"]
 
 S3_SOLAR_FLUX = {
     "S3SL1RBT": {
@@ -191,8 +197,6 @@ S3_SOLAR_FLUX = {
     },
     "S3SL2LST": None,
 }
-
-S3_SUPPORTED_PRODUCTS = ["S3SL1RBT", "S3SL2LST"]
 
 S3_FILE_PATTERN = {
     "S3OL1ERF": None,
@@ -239,7 +243,7 @@ S3_VIEWS = {
 
 S3_RADIANCE_ADJUSTMENT = {
     "S3_PN_SLSTR_L1_08": {
-        "o": {
+        "n": {
             # Nadir
             "S1": 0.97,
             "S2": 0.98,
@@ -247,7 +251,7 @@ S3_RADIANCE_ADJUSTMENT = {
             "S5": 1.11,
             "S6": 1.13,
         },
-        "n": {
+        "o": {
             # Oblique
             "S1": 0.94,
             "S2": 0.95,
@@ -468,23 +472,11 @@ DTYPE_TO_GRASS = {
 OVERWRITE = gs.overwrite()
 
 GISENV = gs.gisenv()
-GISDBASE = GISENV["GISDBASE"]
 TMP_FILE = Path(gs.tempfile(create=False))
 TMP_FILE.mkdir(exist_ok=True, parents=True)
 TMP_NAME = gs.tempname(12)
 
-MAPSET = None
 SUN_ZENITH_ANGLE = None
-
-
-# From r.import
-
-# initialize global vars
-TMP_REG_NAME = None
-TMPLOC = None
-SRCGISRC = None
-GISDBASE = None
-TMP_REG_NAME = None
 
 
 def cleanup():
@@ -502,23 +494,8 @@ def cleanup():
             if map_file.is_file():
                 map_file.unlink()
 
-    # remove temp location
-    if TMPLOC:
-        gs.try_rmdir(os.path.join(GISDBASE, TMPLOC))
-    if SRCGISRC:
-        gs.try_remove(SRCGISRC)
-    if (
-        TMP_REG_NAME
-        and gs.find_file(
-            name=TMP_REG_NAME, element="vector", mapset=gs.gisenv()["MAPSET"]
-        )["fullname"]
-    ):
-        gs.run_command(
-            "g.remove", type="vector", name=TMP_REG_NAME, flags="f", quiet=True
-        )
-
     gs.run_command(
-        "g.remove", type="vector", pattern=f"{TMP_NAME}_*", flags="f", quiet=True
+        "g.remove", type="raster", pattern=f"{TMP_NAME}_*", flags="f", quiet=True
     )
 
 
@@ -557,18 +534,35 @@ def get_dtype_range(np_datatype):
     }
 
 
+def consolidat_metadata_dicts(metadata_dicts):
+    """Consolidate a list of metadata dictionaries for all
+    input scenes into unified metadata for the resulting map"""
+    map_metadata_dicts = {}
+    for map_dict in metadata_dicts:
+        for map_name, meta_dict in map_dict.items():
+            if map_name not in map_metadata_dicts:
+                map_metadata_dicts[map_name] = {}
+            for meta_key, meta_value in meta_dict.items():
+                if meta_key not in map_metadata_dicts[map_name]:
+                    map_metadata_dicts[map_name][meta_key] = meta_value
+                else:
+                    if (
+                        isinstance(map_metadata_dicts[map_name][meta_key], list)
+                        and meta_value not in map_metadata_dicts[map_name][meta_key]
+                    ):
+                        map_metadata_dicts[map_name][meta_key].append(meta_value)
+                    elif meta_value != map_metadata_dicts[map_name][meta_key]:
+                        map_metadata_dicts[map_name][meta_key] = [
+                            map_metadata_dicts[map_name][meta_key],
+                            meta_value,
+                        ]
+    return map_metadata_dicts
+
+
 def write_metadata(json_dict, metadatajson):
     """Write extended map metadata to JSON file"""
-    gs.verbose(_("Writing metadata to maps..."))
     with open(metadatajson, "w", encoding="UTF8") as outfile:
         json.dump(json_dict, outfile)
-
-
-def write_register_file(filename, register_input):
-    """Write file to register resulting maps"""
-    gs.verbose(_("Writing register file <{}>...").format(filename))
-    with open(filename, "w", encoding="UTF8") as register_file:
-        register_file.write("\n".join(chain(*register_input)))
 
 
 def convert_units(np_column, from_u, to_u):
@@ -654,6 +648,10 @@ def parse_s3_file_name(file_name):
             "cycle": file_name[69:72],
             "relative_orbit": file_name[73:76],
             "frame": file_name[77:81],
+            "producer": file_name[82:85],
+            "product_class": file_name[86:87],
+            "timeliness": file_name[88:90],
+            "baseline_collection": file_name[91:94],
         }
     except ValueError:
         gs.fatal(_("{} is not a supported Sentinel-3 scene").format(str(file_name)))
@@ -670,6 +668,8 @@ def extract_file_info(s3_files, basename=None):
             result_dict["cycle"] = {file_info["cycle"]}
             result_dict["relative_orbit"] = {file_info["relative_orbit"]}
             result_dict["frame"] = {file_info["frame"]}
+            result_dict["start_time"] = file_info["start_time"]
+            result_dict["end_time"] = file_info["end_time"]
         else:
             if file_info["mission_id"] != result_dict["mission_id"]:
                 result_dict["mission_id"] = "S3_"
@@ -683,19 +683,15 @@ def extract_file_info(s3_files, basename=None):
             result_dict["cycle"].add(file_info["cycle"])
             result_dict["relative_orbit"].add(file_info["relative_orbit"])
             result_dict["frame"].add(file_info["frame"])
-    for key in ["duration", "cycle", "relative_orbit"]:
+    for key in ["cycle", "relative_orbit"]:
         if len(result_dict[key]) > 1:
             gs.warning(
                 _("Merging {key}s {values}").format(
                     key=key, values=", ".join(result_dict[key])
                 )
             )
-    if len(result_dict["mission_id"]) == "3_":
-        gs.warning(
-            _("Merging Seninel-3A and Seninel-3B data").format(
-                key=key, values=", ".join(result_dict[key])
-            )
-        )
+    if result_dict["mission_id"] == "3_":
+        gs.warning(_("Merging Seninel-3A and Seninel-3B data"))
     if not basename:
         basename = "_".join(
             [
@@ -710,7 +706,10 @@ def extract_file_info(s3_files, basename=None):
                 list(result_dict["relative_orbit"])[0],
             ]
         )
-    return {basename: result_dict}
+    return (
+        basename,
+        result_dict,
+    )
 
 
 def get_geocoding(zip_file, root, geo_bands_dict, region_bounds=None):
@@ -767,14 +766,14 @@ def get_geocoding(zip_file, root, geo_bands_dict, region_bounds=None):
 def setup_import_multi_module(
     tmp_ascii,
     mapname,
+    distance=None,
+    fill_flags=False,
     zrange=None,
     val_col=None,
     data_type=None,
     method="mean",
     solar_flux=None,
     rules=None,
-    # support_kwargs=None,
-    # env_=None,
 ):
     """Setup GRASS GIS moduls for importing S3 bands"""
     # Basic import module
@@ -795,70 +794,44 @@ def setup_import_multi_module(
             zrange=zrange,
             percent=100,
             run_=False,
-            quiet=gs.verbosity() <= 2,
+            verbose=False,
+            quiet=True,
             overwrite=OVERWRITE,
-            # env_=env_,
         )
     ]
-    # Interpolation for missing pixels
-    nbh_function = "nmedian" if method == "mean" else "nmode"
-    neighborhoods = ", ".join(
-        [
-            f"{TMP_NAME}_{mapname}{nbh}"
-            for nbh in [
-                "[0,1]",
-                "[1,1]",
-                "[1,0]",
-                "[1,-1]",
-                "[0,-1]",
-                "[-1,-1]",
-                "[-1,0]",
-                "[-1,1]",
-            ]
-        ]
-    )
-    mc_interpolate_template = f"{{mapname}}=if(isnull({TMP_NAME}_{mapname}), {nbh_function}({neighborhoods}), {TMP_NAME}_{mapname})"
 
+    # Interpolation of missing / empty pixels
+    interp_mod = Module(
+        "r.fill.stats",
+        flags=fill_flags,
+        input=f"{TMP_NAME}_{mapname}",
+        mode="wmean" if method == "mean" else "mode",
+        cells=3,
+        distance=distance,
+        power=2.0,
+        run_=False,
+        quiet=True,
+        overwrite=OVERWRITE,
+    )
     # Add conversion from radiance to reflectance if requested and relevant
     if solar_flux:
-        mc_interpolate = mc_interpolate_template.format(
-            mapname=f"{TMP_NAME}_{mapname}_rad"
-        )
+        interp_mod.outputs.output = f"{TMP_NAME}_{mapname}_rad"
+        modules.append(interp_mod)
         mapname_reflectance = mapname.replace("radiance", "reflectance")
-        mc_expression = f"eval({mc_interpolate})\n{mapname_reflectance}={TMP_NAME}_{mapname}_rad * {np.pi} / {solar_flux} / cos({SUN_ZENITH_ANGLE})"
+        # Create mapcalc module
+        modules.append(
+            Module(
+                "r.mapcalc",
+                expression=f"{mapname_reflectance}={TMP_NAME}_{mapname}_rad * ({np.pi} / {solar_flux} / cos({SUN_ZENITH_ANGLE}))",
+                quiet=True,
+                overwrite=OVERWRITE,
+                run_=False,
+            )
+        )
         mapname = mapname_reflectance
     else:
-        mc_expression = mc_interpolate_template.format(mapname=mapname)
-
-    # Create mapcalc module
-    modules.append(
-        Module(
-            "r.mapcalc",
-            expression=mc_expression,
-            quiet=gs.verbosity() <= 2,
-            overwrite=OVERWRITE,
-            run_=False,
-            # env_=env_,
-        )
-    )
-    # if support_kwargs:
-    #     modules.extend(
-    #         [
-    #             Module(
-    #                 "r.support",
-    #                 **support_kwargs,
-    #                 quiet=True,
-    #                 run_=False,
-    #             ),
-    #             Module(
-    #                 "r.timestamp",
-    #                 map=mapname,
-    #                 date=start_time,
-    #                 quiet=True,
-    #                 run_=False,
-    #             ),
-    #         ]
-    #     )
+        interp_mod.outputs.output = mapname
+        modules.append(interp_mod)
 
     # Add categories (for flag datasets)
     if rules:
@@ -901,6 +874,7 @@ def get_file_metadata(nc_dataset):
 
     metadata["start_time"] = parse_timestr(nc_dataset.start_time)
     metadata["end_time"] = parse_timestr(nc_dataset.stop_time)
+    metadata["history"] = metadata["history"].strip()
 
     return metadata
 
@@ -921,7 +895,7 @@ def get_band_metadata(
     mapname = f"{basename}_{varname_short}"
     metadata["mapname"] = mapname
 
-    band_title = nc_variable.long_name if "long_name" in band_attrs else band.full_name
+    # band_title = nc_variable.long_name if "long_name" in band_attrs else band.full_name
 
     # Define unit
     unit = nc_variable.units if "units" in band_attrs else None
@@ -940,22 +914,23 @@ def get_band_metadata(
             )
         )
     if datatype in ["uint8", "uint16"]:
-        method = "max"  # Unfortunately there is no "mode" in r.in.xyz
+        metadata["method"] = "max"  # Unfortunately there is no "mode" in r.in.xyz
         fmt += ",%i"
     else:
-        method = "mean"
+        metadata["method"] = "mean"
         fmt += ",%.12f"
-    metadata["method"] = method
     metadata["datatype"] = DTYPE_TO_GRASS[datatype]
 
     # Compile description
     for time_reference in ["start_time", "end_time"]:
         metadata[time_reference] = metadata[time_reference].isoformat()
-    description = json.dumps(metadata, separators=["\n", ": "]).lstrip("{").rstrip("}")
+    metadata["description"] = (
+        json.dumps(metadata, separators=["\n", ": "]).lstrip("{").rstrip("}")
+    )
 
     # Handle offset, scale, and valid data range, see:
     # https://docs.unidata.ucar.edu/netcdf-c/current/attribute_conventions.html
-    zrange = None
+    metadata["zrange"] = None
     if "valid_range" in band_attrs:
         min_val, max_val = nc_variable.valid_range
     elif "valid_max" in band_attrs:
@@ -983,21 +958,10 @@ def get_band_metadata(
         if "scale_factor" in band_attrs and min_val and max_val:
             min_val = min_val * nc_variable.scale_factor
             max_val = max_val * nc_variable.scale_factor
-        description += f"\n\nvalid_min: {min_val}\nvalid_max: {max_val}"
-        zrange = [min_val, max_val]
-    metadata["description"] = description
+        metadata["description"] += f"\n\nvalid_min: {min_val}\nvalid_max: {max_val}"
+        metadata["zrange"] = [min_val, max_val]
 
-    metadata["zrange"] = zrange
-    metadata["support_kwargs"] = {
-        "map": mapname,
-        "title": f"{band_title} from {metadata['title']}",
-        "history": None,
-        "units": unit,
-        "source1": metadata["product_name"],
-        "source2": metadata["history"],
-        "description": description,
-        "semantic_label": f"S3_{varname_short}",
-    }
+    metadata["semantic_label"] = f"S3_{varname_short}"
 
     return metadata, fmt
 
@@ -1067,14 +1031,12 @@ def write_xyz(tmp_ascii, nc_bands, mask, fmt=None, project=True):
 def import_s3(s3_file, kwargs, s3_product=None):
     """Import Sentinel-3 netCDF4 data"""
     # Unpack dictionary variables
-    rmap = list(kwargs["meta_dict"].keys())[0]
+    rmap = kwargs["meta_dict"][0]
     region_bounds = kwargs["reg_bounds"]
-    # current_reg = kwargs["current_reg"]
     mod_flags = kwargs["mod_flags"]
-    json_standard_folder = kwargs["json_standard_folder"]
     module_queue = {}
     region_dicts = {}
-    register_strings = {}
+    register_strings = []
 
     with ZipFile(s3_file) as zip_file:
         members = zip_file.namelist()
@@ -1111,9 +1073,8 @@ def import_s3(s3_file, kwargs, s3_product=None):
                     mod_flags,
                     tmp_ascii,
                     fmt=fmt,
-                    json_standard_folder=json_standard_folder,
                 )
-                register_strings[nc_file] = register_output
+                register_strings.append(register_output)
             region_dicts[stripe] = write_xyz(
                 tmp_ascii, nc_bands, mask, fmt=fmt, project=True
             )
@@ -1157,7 +1118,6 @@ class S3Product:
         class_dict = self.__dict__.copy()
         for band_type in ["bands", "flag_bands", "anxillary_bands"]:
             bands_of_type = getattr(self, band_type)
-            print(bands_of_type)
             class_dict[band_type] = (
                 {
                     band: description.__dict__ if description else None
@@ -1248,7 +1208,6 @@ class S3Product:
         module_flags,
         tmp_ascii,
         fmt=None,
-        json_standard_folder=None,
     ):
         """Extract requested bands as numpy arrays from NetCDF file and setup import modules"""
         meta_information = {}
@@ -1262,8 +1221,11 @@ class S3Product:
                 solar_flux = None
                 if band in self.bands:
                     band = self.bands[band]
-                    if band.solar_flux:
-                        solar_flux = band.solar_flux["default"]
+                    if band.solar_flux and module_flags["r"]:
+                        solar_flux = band.get_solar_flux(
+                            zip_file,
+                            root,
+                        )
                 elif band in self.flag_bands:
                     band = self.flag_bands[band]
                 elif band in self.anxillary_bands:
@@ -1297,12 +1259,9 @@ class S3Product:
                     module_flags=module_flags,
                 )
                 fmt = metadata[1]
-                if band.radiance_adjustment and module_flags["r"]:
-                    # Get solar flux for band
-                    metadata[0]["solar_flux"] = band.get_solar_flux(
-                        zip_file,
-                        root,
-                    )
+
+                # Get solar flux for band
+                metadata[0]["solar_flux"] = solar_flux
 
                 if band.exception:
                     if np.ma.is_masked(add_array):
@@ -1322,23 +1281,6 @@ class S3Product:
 
                 # Write metadata json if requested
                 band_attrs = nc_file_open[band.full_name].ncattrs()
-                if json_standard_folder:
-                    write_metadata(
-                        {
-                            **{
-                                a: np_as_scalar(nc_file_open.getncattr(a))
-                                for a in nc_file_open.ncattrs()
-                            },
-                            **{"variable": band.full_name},
-                            **{
-                                a: np_as_scalar(
-                                    nc_file_open[band.full_name].getncattr(a)
-                                )
-                                for a in nc_file_open[band.full_name].ncattrs()
-                            },
-                        },
-                        json_standard_folder.joinpath(metadata[0]["mapname"] + ".json"),
-                    )
 
                 # Define categories for flag datasets
                 rules = None
@@ -1357,26 +1299,39 @@ class S3Product:
                         ]
                     )
                 # Setup import modules
+                fill_flags = "m"
+                if not module_flags["d"] and metadata[0]["datatype"] != "CELL":
+                    fill_flags += "s"
+                if module_flags["k"]:
+                    fill_flags += "k"
                 module_queue[band.full_name] = setup_import_multi_module(
                     tmp_ascii,
                     metadata[0]["mapname"],
+                    distance=2.0 * band.resolution,
+                    fill_flags=fill_flags,
                     zrange=metadata[0]["zrange"],
                     val_col=len(nc_bands) + 1,
                     data_type=metadata[0]["datatype"],
                     method=metadata[0]["method"],
-                    # support_kwargs=metadata[0]["support_kwargs"],
                     solar_flux=solar_flux,
                     rules=rules,
-                    # env_=None,
                 )
 
                 # Add array with invalid data masked to ordered dict of nc_bands
                 nc_bands[band.full_name] = add_array
+
                 meta_information[metadata[0]["mapname"]] = {
-                    "rules": rules,
-                    "start_time": metadata[0]["start_time"],
-                    "end_time": metadata[0]["end_time"],
-                    "support_kwargs": metadata[0]["support_kwargs"],
+                    "semantic_label": metadata[0]["semantic_label"],
+                    "unit": metadata[0]["unit"],
+                    **{
+                        a: np_as_scalar(nc_file_open.getncattr(a))
+                        for a in nc_file_open.ncattrs()
+                    },
+                    **{"variable": band.full_name},
+                    **{
+                        a: np_as_scalar(nc_file_open[band.full_name].getncattr(a))
+                        for a in nc_file_open[band.full_name].ncattrs()
+                    },
                 }
 
             return nc_bands, module_queue, meta_information, fmt
@@ -1408,7 +1363,7 @@ class S3Product:
         ].items():
             fmt += ",%.12f"
             sun_parameter_array = sun_parameter_nc[band.format(self.view)]
-            nc_bands[band_id] = sun_parameter_array[:] * np.pi / 180.0
+            nc_bands[band_id] = sun_parameter_array[:]
             map_name = f"{prefix}_{band_id}"
             if band_id == "solar_zenith":
                 global SUN_ZENITH_ANGLE
@@ -1416,6 +1371,8 @@ class S3Product:
             import_modules[band_id] = setup_import_multi_module(
                 tmp_ascii,
                 map_name,
+                distance=3,
+                fill_flags="ks",
                 zrange=None,
                 val_col=len(nc_bands),
                 data_type="FCELL",
@@ -1498,7 +1455,7 @@ class S3Band:
 
     def _get_radiance_adjustment(self, radiance_adjustment, view):
         if radiance_adjustment not in S3_RADIANCE_ADJUSTMENT:
-            print("Oh no")
+            gs.fatal("Missing information on radiance adjustment")
         if self.band_id in S3_RADIANCE_ADJUSTMENT[radiance_adjustment][view]:
             return S3_RADIANCE_ADJUSTMENT[radiance_adjustment][view][self.band_id]
         return None
@@ -1526,12 +1483,8 @@ class S3Band:
     def get_solar_flux(self, zip_file, root_path):
         """
         Get solar spectral flux in mW / (m^2 * sr * nm) for band
-
-        Args:
-            band_object (S3Band): Optical Band with radiance
-
-        Returns:
-            float: solar Flux
+        :returns: solar Flux
+        :type: float
 
         """
         if not self.solar_flux:
@@ -1590,7 +1543,7 @@ def main():
     s3_files = [Path(scene) for scene in s3_files]
     for s3_scene in s3_files:
         if not s3_scene.exists():
-            gs.fatal(_("Input file <{sn}> not found").format(str(sn=s3_scene)))
+            gs.fatal(_("Input file <{sn}> not found").format(sn=str(s3_scene)))
         if not re.match(pattern, s3_scene.name):
             gs.fatal(
                 _(
@@ -1611,8 +1564,7 @@ def main():
     )
 
     meta_info_dict = extract_file_info(s3_files, basename=options["basename"])
-    # Group scenes by mission,
-    # groups = group_scenes(s3_files, granularity="1 day")
+
     if gs.parse_command("g.proj", flags="g")["proj"] == "ll":
         gs.fatal(_("Running in lonlat location is currently not supported"))
 
@@ -1621,49 +1573,38 @@ def main():
     # Get region bounds
     region_bounds = gs.parse_command("g.region", flags="ugb", quiet=True)
     current_region = gs.parse_command("g.region", flags="ug")
-    # has_band_ref = float(gs.version()["version"][0:3]) >= 7.9
-
-    json_standard_folder = None
-    if flags["j"]:
-        env = gs.gisenv()
-        json_standard_folder = Path(env["GISDBASE"]).joinpath(
-            env["LOCATION_NAME"], env["MAPSET"], "cell_misc"
-        )
-        if not json_standard_folder.exists():
-            json_standard_folder.mkdir(parents=True, exist_ok=True)
 
     # Collect variables for import
     import_dict = {
         "reg_bounds": dict(region_bounds),
         "current_reg": dict(current_region),
         "mod_flags": flags,
-        "json_standard_folder": json_standard_folder,
         "meta_dict": meta_info_dict,
     }
 
-    if flags["p"]:
-        print(
-            "|".join(
-                [
-                    "product_file_name",
-                    "nc_file_name",
-                    "nc_file_title",
-                    "nc_file_start_time",
-                    "nc_file_creation_time",
-                    "band",
-                    "band_shape",
-                    "band_title",
-                    "band_standard_name",
-                    "band_long_name",
-                ]
-            )
-        )
-        print("\n".join(chain(*import_result)))
-        cleanup()
-        return 0
+    # if flags["p"]:
+    #     print(
+    #         "|".join(
+    #             [
+    #                 "product_file_name",
+    #                 "nc_file_name",
+    #                 "nc_file_title",
+    #                 "nc_file_start_time",
+    #                 "nc_file_creation_time",
+    #                 "band",
+    #                 "band_shape",
+    #                 "band_title",
+    #                 "band_standard_name",
+    #                 "band_long_name",
+    #             ]
+    #         )
+    #     )
+    #     print("\n".join(chain(*import_result)))
+    #     cleanup()
+    #     return 0
 
     module_queues = []
-    register_strings = {}
+    register_strings = []
     region_dicts = {}
     region_list = []
 
@@ -1673,7 +1614,7 @@ def main():
             s3_file, import_dict, s3_product=s3_product
         )
         module_queues.append(module_list)
-        register_strings.update(register_string)
+        register_strings.extend(register_string)
         region_list.append(region_dict)
         if not region_dicts:
             region_dicts = region_dict.copy()
@@ -1686,22 +1627,20 @@ def main():
 
     stripe_envs = {}
     for stripe_id, stripe_region in region_dicts.items():
-        stripe_env = os.environ.copy()
-        stripe_env["GRASS_REGION"] = gs.region_env(
-            **adjust_region(stripe_region)
-        )  # , env=stripe_env)
-        stripe_envs[stripe_id] = stripe_env
-
-        compute_env = stripe_envs["sun_parameters"]
+        if flags["n"] or stripe_id == "sun_parameters":
+            stripe_env = os.environ.copy()
+            stripe_env["GRASS_REGION"] = gs.region_env(**adjust_region(stripe_region))
+            stripe_envs[stripe_id] = stripe_env
 
     if flags["r"]:
         gs.verbose(_("Importing solar parameter bands"))
         queue = ParallelModuleQueue(nprocs)
+        compute_env = stripe_envs["sun_parameters"]
         for solar_parameter in ["solar_azimuth", "solar_zenith"]:
             module_list = []
             for solar_module in module_queues[0][solar_parameter]:
                 solar_module.env_ = compute_env
-                solar_module.verbose = True
+                # solar_module.verbose = True
                 module_list.append(solar_module)
             queue.put(MultiModule(module_list))
         queue.wait()
@@ -1715,23 +1654,116 @@ def main():
     for band_id, modules in module_queues[0].items():
         if band_id in ["solar_azimuth", "solar_zenith"]:
             continue
-        compute_env = stripe_envs[band_id[-2:]]
-        module_list = []
-        for listed_module in modules:
-            listed_module.env_ = compute_env
-            listed_module.verbose = True
-            module_list.append(listed_module)
-        queue.put(MultiModule(module_list))
+        if flags["n"]:
+            compute_env = stripe_envs[band_id[-2:]]
+            module_list = []
+            for listed_module in modules:
+                listed_module.env_ = compute_env
+                # listed_module.verbose = True
+                module_list.append(listed_module)
+            queue.put(MultiModule(module_list))
+        else:
+            queue.put(MultiModule(modules))
     queue.wait()
 
+    # Update map support information
+    t_register_strings = []
+    queue = ParallelModuleQueue(nprocs)
+    for mapname, metadata in consolidat_metadata_dicts(register_strings).items():
+        mapname = (
+            mapname if not flags["r"] else mapname.replace("radiance", "reflectance")
+        )
+        metadata["semantic_label"] = (
+            metadata["semantic_label"]
+            if not flags["r"]
+            else metadata["semantic_label"].replace("radiance", "reflectance")
+        )
+        # Write raster history
+        gs.raster_history(mapname, overwrite=True)
+
+        # Write extended metadata if requested
+        if flags["j"]:
+            gs.verbose(_("Writing metadata to maps..."))
+            json_standard_folder = Path(GISENV["GISDBASE"]).joinpath(
+                GISENV["LOCATION_NAME"], GISENV["MAPSET"], "cell_misc", mapname
+            )
+            if not json_standard_folder.exists():
+                json_standard_folder.mkdir(parents=True, exist_ok=True)
+
+            write_metadata(metadata, str(json_standard_folder / "description.json"))
+
+        description = (
+            json.dumps(metadata, separators=["\n", ": "]).lstrip("{").rstrip("}")
+        )
+        support_kwargs = {
+            "map": mapname,
+            "title": ",".join(metadata["title"])
+            if isinstance(metadata["title"], list)
+            else metadata["title"],
+            "history": ",".join(metadata["history"])
+            if isinstance(metadata["history"], list)
+            else metadata["history"],
+            "units": metadata["unit"],
+            "source1": ",".join(metadata["product_name"])
+            if isinstance(metadata["product_name"], list)
+            else metadata["product_name"],
+            "source2": ",".join(metadata["processing_baseline"])
+            if isinstance(metadata["processing_baseline"], list)
+            else metadata["processing_baseline"],
+            "description": description,
+            "semantic_label": metadata["semantic_label"],
+        }
+
+        queue.put(
+            MultiModule(
+                [
+                    Module(
+                        "r.support",
+                        **support_kwargs,
+                        quiet=True,
+                        run_=False,
+                    ),
+                    Module(
+                        "r.timestamp",
+                        map=mapname,
+                        date="/".join(
+                            [
+                                grass_timestamp(meta_info_dict[1]["start_time"]),
+                                grass_timestamp(meta_info_dict[1]["end_time"]),
+                            ]
+                        ),
+                        quiet=True,
+                        run_=False,
+                    ),
+                ]
+            )
+        )
+        t_register_strings.append(
+            "|".join(
+                [
+                    f"{mapname}@{GISENV['MAPSET']}",
+                    meta_info_dict[1]["start_time"].isoformat(
+                        sep=" ", timespec="seconds"
+                    ),
+                    meta_info_dict[1]["end_time"].isoformat(
+                        sep=" ", timespec="seconds"
+                    ),
+                    metadata["semantic_label"],
+                ]
+            )
+        )
+    queue.wait()
+
+    # Write t.register file if requested
     if options["register_output"]:
-        # Write t.register file if requested
-        write_register_file(
-            options["register_output"], "\n".join(register_strings.values())
+        gs.verbose(
+            _("Writing register file <{}>...").format(options["register_output"])
+        )
+        Path(options["register_output"]).write_text(
+            "\n".join(t_register_strings) + "\n", encoding="UTF8"
         )
     else:
-        print("\n".join(register_strings.values()))
-    cleanup()
+        print("\n".join(t_register_strings))
     return 0
 
 
