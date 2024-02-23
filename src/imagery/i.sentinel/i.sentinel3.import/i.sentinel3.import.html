@@ -1,6 +1,9 @@
 <h2>DESCRIPTION</h2>
 
-The <em>i.sentinel3.import</em> module allows importing Copernicus Sentinel-3 products.
+The <em>i.sentinel3.import</em> module allows importing
+<a href="https://sentinels.copernicus.eu/web/sentinel/missions/sentinel-3">
+Copernicus Sentinel-3 products</a>.
+
 <p>
 The <em>Sentinel-3</em> products types are provided in different formats. Not all of
 them are currently directly supported by GDAL. Some, like the e.g. the SLSTR products
@@ -22,11 +25,13 @@ Currently, only import of the following <b>product_types</b> is implemented:
 
 <p>
 All Sentinel-3 scene files provided in the <b>input</b> option are mosaiced
-into one resulting granule with one map for each imported bands. The <b>input</b>
+into one resulting granule with one map for each imported band. The <b>input</b>
 option accepts either one or many path(s) to Sentinel-3 archives (.zip) separated
-by comma or a textfile with  one Sentinel-3 file per row. The module is designed
-to produce temporally non overlaping mosaics along the tracks of the satellite.
-Input should therefor not mix data from different tracks or sensing periods.
+by comma or a text-file with one Sentinel-3 file per row. The module is designed
+to produce temporally non-overlaping mosaics along the tracks of the satellite.
+Input should therefore not mix data from different tracks, sensing periods,
+or missions (Sentine-3A / Sentinel-3B). The module gives a warning if data from
+different tracks is used as input.
 
 <p>
 Users can provide a custom <b>basename</b>, to which band names are appended.
@@ -49,9 +54,17 @@ In addition, the scene name is stored as <em>source1</em> and the imported or li
 map. After import, the metadata can be retrieved with <em>r.info -e</em>
 as shown below.
 
-
+<p>
+<em>i.sentinel3.import</em> imports the selected bands with the resolution and extent of the current
+region (except for the solar bands), unless the <em>n-flag</em> is used to import bands with their
+native resolution (usually 500m or 1000m).
+    
 <h2>NOTES</h2>
 
+<em>i.sentinel3.import</em> does ONLY support projected coordinate systems and assumes map units to
+be meter.
+
+<p>
 By means of the <b>register_file</b> option <em>i.sentinel3.import</em> allows
 creating a file which can be used to register imported imagery data
 into a space-time raster dateset (STRDS) with
@@ -81,29 +94,30 @@ product=LST basename=S3_LST
 -->
 
 <h3>Import Sentinel-3 data</h3>
-Import all Sentinel-3 data found in <i>data</i> directory and store metadata
-as JSON files within the GRASS GIS database directory:
+Import all Sentinel-3B RBT data of a given start date and track found in <i>data</i> directory, store metadata
+as JSON files within the GRASS GIS database directory, keep pixel values during interpolation (no smoothing),
+import bands at native resolution and rescale radiance bands to reflectance:
 <div class="code"><pre>
-i.sentinel3.import -a -c -j input=./data/ nprocs=4 product_type=S3SL2LST basename=S3_LST
+i.sentinel3.import -k -n -r -j input="$(find data/ -iname "S3B*RBT*____20240129*_089_094_*.zip" | tr '\n' ',' | sed 's/,$/\n/')" \
+    product_type=S3SL1RBT register_output=data/reg.txt nprocs=8 --v --o
+
+# register imported data into existing STRDS
+t.register input=Sentinel_3 file=data/reg.txt
 </pre></div>
 
 
 <h3>Register imported Sentinel-3 data into STRDS</h3>
 
 <div class="code"><pre>
-i.sentinel3.import -a -c -j input=./data/ register_output=./data/reg.txt nprocs=4 \
-product_type=S3SL2LST basename=S3_LST
+i.sentinel3.import -k -n -c -j  input="$(find data/ -iname "S3B*LST*____20240129*_089_094_*.zip" | tr '\n' ',' | sed 's/,$/\n/')" \
+product_type=S3SL2LST register_output=data/reg.txt nprocs=8 --v --o
 
 # register imported data into existing STRDS
-t.register input=Sentinel_3 file=data/reg.txt
+t.register input=Sentinel_3_LST file=data/reg.txt
 </pre></div>
 
-A register file typically contains two columns: imported raster map
-name and timestamp separated by <tt>|</tt>. In the case of current
-development version of GRASS GIS which supports band references concept
-(see <em><a href="https://grass.osgeo.org/grass-devel/manuals/g.bands.html">g.bands</a></em> module for details) a
-register file is extended by a third column containg band reference
-information, see the examples below.
+A register file typically contains the following columns: imported raster map
+name, start and end timestamp as well as semantic label, all separated by <tt>|</tt>, see the examples below:
 
 <div class="code"><pre>
 S3_imp_surface_temperature_20210907T205026|2021-09-07T20:50:26.285902+00:00|2021-09-07T20:53:25.977846+00:00|S3_surface_temperature
@@ -129,6 +143,7 @@ The following Python libraries are required
 <em>
 <a href="i.sentinel.download.html">i.sentinel.download</a>,
 <a href="https://grass.osgeo.org/grass-stable/manuals/r.in.xyz.html">r.in.xyz</a>,
+<a href="https://grass.osgeo.org/grass-stable/manuals/r.fill.stats.html">r.fill.stats</a>,
 <a href="https://grass.osgeo.org/grass-stable/manuals/t.register.html">t.register</a>
 </em>
 
