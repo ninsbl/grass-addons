@@ -169,6 +169,7 @@ import sys
 
 from collections import OrderedDict
 from datetime import datetime
+
 # from itertools import chain
 from pathlib import Path
 from zipfile import ZipFile
@@ -660,16 +661,23 @@ def parse_s3_file_name(file_name):
 def extract_file_info(s3_files, basename=None):
     """Extract information from file name according to naming conventions"""
     result_dict = {}
+    product_track_ids = [
+        "cycle",
+        "relative_orbit",
+        "producer",
+        "product_class",
+        "timeliness",
+        "baseline_collection",
+    ]
     for s3_file in s3_files:
         file_info = parse_s3_file_name(s3_file.name)
         if not result_dict:
             result_dict = file_info
-            result_dict["duration"] = {file_info["duration"]}
-            result_dict["cycle"] = {file_info["cycle"]}
-            result_dict["relative_orbit"] = {file_info["relative_orbit"]}
-            result_dict["frame"] = {file_info["frame"]}
             result_dict["start_time"] = file_info["start_time"]
             result_dict["end_time"] = file_info["end_time"]
+            result_dict["frame"] = {file_info["frame"]}
+            for pid in product_track_ids:
+                result_dict[pid] = {file_info[pid]}
         else:
             if file_info["mission_id"] != result_dict["mission_id"]:
                 result_dict["mission_id"] = "S3_"
@@ -679,15 +687,14 @@ def extract_file_info(s3_files, basename=None):
             result_dict["end_time"] = max(
                 result_dict["end_time"], file_info["end_time"]
             )
-            result_dict["duration"].add(file_info["duration"])
-            result_dict["cycle"].add(file_info["cycle"])
-            result_dict["relative_orbit"].add(file_info["relative_orbit"])
+            for pid in product_track_ids:
+                result_dict[pid].add(file_info[pid])
             result_dict["frame"].add(file_info["frame"])
-    for key in ["cycle", "relative_orbit"]:
-        if len(result_dict[key]) > 1:
+    for pid in product_track_ids:
+        if len(result_dict[pid]) > 1:
             gs.warning(
-                _("Merging {key}s {values}").format(
-                    key=key, values=", ".join(result_dict[key])
+                _("Merging {key} {values}").format(
+                    key=pid, values=", ".join(result_dict[pid])
                 )
             )
     if result_dict["mission_id"] == "3_":
@@ -701,9 +708,7 @@ def extract_file_info(s3_files, basename=None):
                 result_dict["product"],
                 result_dict["start_time"].strftime("%Y%m%d%H%M%S"),
                 result_dict["end_time"].strftime("%Y%m%d%H%M%S"),
-                list(result_dict["duration"])[0],
-                list(result_dict["cycle"])[0],
-                list(result_dict["relative_orbit"])[0],
+                *[list(result_dict[pid])[0] for pid in product_track_ids],
             ]
         )
     return (
