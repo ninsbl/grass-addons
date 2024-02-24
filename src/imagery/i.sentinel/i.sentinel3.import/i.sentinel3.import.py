@@ -343,14 +343,14 @@ S3_BANDS = {
         "S3SL2LST": {
             "LST": {
                 "geometries": ("i",),
-                "nc_file": "LST_{}.nc",
+                "nc_file": "{}_{}.nc",
                 "full_name": "{}",
                 "types": None,
                 "exception": "exception",
             },
             "LST_uncertainty": {
                 "geometries": ("i",),
-                "nc_file": "LST_{}.nc",
+                "nc_file": "LST_in.nc",
                 "full_name": "{}",
                 "types": None,
                 "exception": "exception",
@@ -936,36 +936,32 @@ def get_band_metadata(
     # Handle offset, scale, and valid data range, see:
     # https://docs.unidata.ucar.edu/netcdf-c/current/attribute_conventions.html
     metadata["zrange"] = None
+    min_val, max_val = None, None
     if "valid_range" in band_attrs:
         min_val, max_val = nc_variable.valid_range
-    elif "valid_max" in band_attrs:
+    if "valid_min" in band_attrs:
         min_val = nc_variable.valid_min
+    if "valid_max" in band_attrs:
         max_val = nc_variable.valid_max
-    elif "_FillValue" in band_attrs:
-        data_range = get_dtype_range(datatype)
-        fill_val = nc_variable._FillValue
+    data_range = get_dtype_range(datatype)
+    if "_FillValue" in band_attrs:
+        fill_val = np.float64(nc_variable._FillValue)
         if fill_val > 0:
-            min_val = data_range["min"]
-            max_val = fill_val - data_range["resolution"]
-        elif fill_val < 0:
-            min_val = fill_val + data_range["resolution"]
-            max_val = data_range["max"]
-        else:
-            min_val, max_val = None, None
+            min_val = data_range["min"] if min_val is None else min_val
+            max_val = fill_val - 1 if max_val is None else max_val  # data_range["resolution"]
+        elif fill_val <= 0:
+            min_val = fill_val + 1 if min_val is None else min_val  # data_range["resolution"]
+            max_val = data_range["max"] if max_val is None else max_val
     else:
-        min_val, max_val = None, None
+        min_val = data_range["min"] + 1 if min_val is None else min_val  # data_range["resolution"]
+        max_val = data_range["max"] if max_val is None else max_val
 
-    if min_val and max_val:
-        if "add_offset" in band_attrs and min_val and max_val:
-            min_val = min_val + nc_variable.add_offset
-            max_val = max_val + nc_variable.add_offset
+    if "flag_masks" in band_attrs:
+        min_val = min(nc_variable.flag_masks)
+        max_val = max(nc_variable.flag_masks)
 
-        if "scale_factor" in band_attrs and min_val and max_val:
-            min_val = min_val * nc_variable.scale_factor
-            max_val = max_val * nc_variable.scale_factor
-        metadata["description"] += f"\n\nvalid_min: {min_val}\nvalid_max: {max_val}"
-        metadata["zrange"] = [min_val, max_val]
-
+    metadata["description"] += f"\n\nvalid_min: {min_val}\nvalid_max: {max_val}"
+    metadata["zrange"] = [min_val, max_val]
     metadata["semantic_label"] = f"S3_{varname_short}"
 
     return metadata, fmt
@@ -1220,7 +1216,6 @@ class S3Product:
         nc_file_path = zip_file.extract(member, path=TMP_FILE)
         with Dataset(nc_file_path) as nc_file_open:
             file_metadata = get_file_metadata(nc_file_open)
-
             for band in container_dict_items[1]:
                 # Check for band
                 solar_flux = None
@@ -1235,7 +1230,6 @@ class S3Product:
                     band = self.flag_bands[band]
                 elif band in self.anxillary_bands:
                     band = self.anxillary_bands[band]
-
                 if band.full_name not in nc_file_open.variables:
                     gs.fatal(
                         _(
@@ -1271,19 +1265,19 @@ class S3Product:
                 if band.exception:
                     if np.ma.is_masked(add_array):
                         add_array.mask = np.ma.mask_or(
-                            add_array.mask, nc_file_open[band.exception][:] > 0
+                            add_array.mask, nc_file_open[band.exception][:] >= 3
                         )
                     else:
                         add_array = np.ma.masked_array(
-                            add_array, nc_file_open[band.exception][:] > 0
+                            add_array, nc_file_open[band.exception][:] >= 3
                         )
                 if np.ma.is_masked(add_array):
                     add_array = add_array.filled()
 
                 # Rescale temperature variables if requested
-                if band.full_name.startswith("LST") and module_flags["c"]:
+                if band.full_name == "LST" and module_flags["c"]:
                     add_array = convert_units(add_array, "K", "degree_celsius")
-
+ 
                 # Write metadata json if requested
                 band_attrs = nc_file_open[band.full_name].ncattrs()
 
@@ -1378,7 +1372,7 @@ class S3Product:
                 map_name,
                 distance=3,
                 fill_flags="ks",
-                zrange=None,
+                zrange=[-32767,32768],
                 val_col=len(nc_bands),
                 data_type="FCELL",
                 method="mean",
@@ -1473,7 +1467,7 @@ class S3Band:
         return None
 
     def _get_solar_flux_dict_for_band(self, product_type):
-        if self.band_id in S3_SOLAR_FLUX[product_type]["defaults"]:
+        if S3_SOLAR_FLUX[product_type] and self.band_id in S3_SOLAR_FLUX[product_type]["defaults"]:
             return {
                 "default": S3_SOLAR_FLUX[product_type]["defaults"][self.band_id],
                 "band": S3_SOLAR_FLUX[product_type]["band"].format(
@@ -1660,11 +1654,14 @@ def main():
         if band_id in ["solar_azimuth", "solar_zenith"]:
             continue
         if flags["n"]:
-            compute_env = stripe_envs[band_id[-2:]]
+            # S3SL2LST product has only "in" stripe and band names have no suffix
+            if band_id[-2:] not in stripe_envs:
+                compute_env = stripe_envs["in"]
+            else:
+                compute_env = stripe_envs[band_id[-2:]]
             module_list = []
             for listed_module in modules:
                 listed_module.env_ = compute_env
-                # listed_module.verbose = True
                 module_list.append(listed_module)
             queue.put(MultiModule(module_list))
         else:
@@ -1674,6 +1671,7 @@ def main():
     # Update map support information
     t_register_strings = []
     queue = ParallelModuleQueue(nprocs)
+    gs.verbose(_("Writing metadata to maps..."))
     for mapname, metadata in consolidat_metadata_dicts(register_strings).items():
         mapname = (
             mapname if not flags["r"] else mapname.replace("radiance", "reflectance")
@@ -1688,7 +1686,6 @@ def main():
 
         # Write extended metadata if requested
         if flags["j"]:
-            gs.verbose(_("Writing metadata to maps..."))
             json_standard_folder = Path(GISENV["GISDBASE"]).joinpath(
                 GISENV["LOCATION_NAME"], GISENV["MAPSET"], "cell_misc", mapname
             )
