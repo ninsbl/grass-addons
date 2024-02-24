@@ -535,7 +535,7 @@ def get_dtype_range(np_datatype):
     }
 
 
-def consolidat_metadata_dicts(metadata_dicts):
+def consolidate_metadata_dicts(metadata_dicts):
     """Consolidate a list of metadata dictionaries for all
     input scenes into unified metadata for the resulting map"""
     map_metadata_dicts = {}
@@ -945,7 +945,7 @@ def get_band_metadata(
         max_val = nc_variable.valid_max
     data_range = get_dtype_range(datatype)
     if "_FillValue" in band_attrs:
-        fill_val = np.float64(nc_variable._FillValue)
+        fill_val = nc_variable._FillValue
         if fill_val > 0:
             min_val = data_range["min"] if min_val is None else min_val
             max_val = fill_val - 1 if max_val is None else max_val  # data_range["resolution"]
@@ -1672,7 +1672,7 @@ def main():
     t_register_strings = []
     queue = ParallelModuleQueue(nprocs)
     gs.verbose(_("Writing metadata to maps..."))
-    for mapname, metadata in consolidat_metadata_dicts(register_strings).items():
+    for mapname, metadata in consolidate_metadata_dicts(register_strings).items():
         mapname = (
             mapname if not flags["r"] else mapname.replace("radiance", "reflectance")
         )
