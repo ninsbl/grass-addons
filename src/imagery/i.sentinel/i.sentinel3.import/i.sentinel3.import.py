@@ -630,6 +630,23 @@ def adjust_region(region_dict):
     return region_dict
 
 
+def intersect_region(region_a, region_b):
+    """
+    Adjust region bounds for r.in.xyz (bounds + half resolution)
+    aligned to resolution in ew and ns direction
+    starting from the sw-corner
+    """
+    relevant_keys = ["n", "s", "e", "w", "nsres", "ewres"]
+    region_dict = {"nsres": region_a["nsres"], "ewres": region_a["ewres"]}
+    region_a = {region_key: float(region_a[region_key]) for region_key in relevant_keys}
+    region_b = {region_key: float(region_b[region_key]) for region_key in relevant_keys}
+    region_dict["s"] = region_a["s"] if region_a["s"] >= region_b["s"] else region_a["s"] + np.ceil((region_a["s"] - region_b["s"]) / region_a["nsres"]) * region_a["nsres"]
+    region_dict["w"] = region_a["w"] if region_a["w"] >= region_b["w"] else region_a["w"] + np.ceil((region_a["w"] - region_b["w"]) / region_a["ewres"]) * region_a["ewres"]
+    region_dict["n"] = region_a["n"] if region_a["n"] <= region_b["n"] else region_a["n"] - np.floor((region_a["n"] - region_b["n"]) / region_a["nsres"]) * region_a["nsres"]
+    region_dict["e"] = region_a["e"] if region_a["e"] <= region_b["e"] else region_a["e"] - np.floor((region_a["e"] - region_b["e"]) / region_a["ewres"]) * region_a["ewres"]
+    return region_dict
+
+
 def parse_s3_file_name(file_name):
     """Extract info from file name according to naming onvention:
     https://sentinels.copernicus.eu/web/sentinel/user-guides/sentinel-3-slstr/naming-convention
@@ -1626,10 +1643,12 @@ def main():
 
     stripe_envs = {}
     for stripe_id, stripe_region in region_dicts.items():
+        stripe_env = os.environ.copy()
         if flags["n"] or stripe_id == "sun_parameters":
-            stripe_env = os.environ.copy()
             stripe_env["GRASS_REGION"] = gs.region_env(**adjust_region(stripe_region))
-            stripe_envs[stripe_id] = stripe_env
+        else:
+            stripe_env["GRASS_REGION"] = gs.region_env(**intersect_region(dict(current_region), stripe_region))
+        stripe_envs[stripe_id] = stripe_env
 
     if flags["r"]:
         gs.verbose(_("Importing solar parameter bands"))
