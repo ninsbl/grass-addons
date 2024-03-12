@@ -81,6 +81,13 @@
 # % required: no
 # %end
 
+# %option
+# % key: maximum_solar_angle
+# % type: double
+# % description: Import only pixels where solar angle is lower or equal to the given maximum
+# % required: no
+# %end
+
 # %option G_OPT_M_NPROCS
 # %end
 
@@ -630,20 +637,28 @@ def adjust_region(region_dict):
     return region_dict
 
 
-def intersect_region(region_a, region_b):
+def intersect_region(region_current, region_stripe, align_current=True):
     """
-    Adjust region bounds for r.in.xyz (bounds + half resolution)
+    Adjust region bounds for r.in.xyz to the intersection
+    of the current region (bounds + half resolution)
     aligned to resolution in ew and ns direction
     starting from the sw-corner
     """
     relevant_keys = ["n", "s", "e", "w", "nsres", "ewres"]
-    region_dict = {"nsres": region_a["nsres"], "ewres": region_a["ewres"]}
-    region_a = {region_key: float(region_a[region_key]) for region_key in relevant_keys}
-    region_b = {region_key: float(region_b[region_key]) for region_key in relevant_keys}
-    region_dict["s"] = region_a["s"] if region_a["s"] >= region_b["s"] else region_a["s"] + np.ceil((region_a["s"] - region_b["s"]) / region_a["nsres"]) * region_a["nsres"]
-    region_dict["w"] = region_a["w"] if region_a["w"] >= region_b["w"] else region_a["w"] + np.ceil((region_a["w"] - region_b["w"]) / region_a["ewres"]) * region_a["ewres"]
-    region_dict["n"] = region_a["n"] if region_a["n"] <= region_b["n"] else region_a["n"] - np.floor((region_a["n"] - region_b["n"]) / region_a["nsres"]) * region_a["nsres"]
-    region_dict["e"] = region_a["e"] if region_a["e"] <= region_b["e"] else region_a["e"] - np.floor((region_a["e"] - region_b["e"]) / region_a["ewres"]) * region_a["ewres"]
+    if align_current:
+        region_dict = {"nsres": region_current["nsres"], "ewres": region_current["ewres"]}
+    else:
+        region_dict = {"nsres": region_stripe["nsres"], "ewres": region_stripe["ewres"]}
+    region_current = {region_key: float(region_current[region_key]) for region_key in relevant_keys}
+    region_stripe = {region_key: float(region_stripe[region_key]) for region_key in relevant_keys}
+    stripe_s = region_stripe["s"] - region_stripe["nsres"] / 2.0
+    stripe_n = region_stripe["n"] + region_stripe["nsres"] / 2.0
+    stripe_w = region_stripe["w"] - region_stripe["ewres"] / 2.0
+    stripe_e = region_stripe["e"] + region_stripe["ewres"] / 2.0
+    region_dict["s"] = region_current["s"] if region_current["s"] >= stripe_s else region_current["s"] + np.ceil((region_current["s"] - stripe_s) / float(region_dict["nsres"])) * float(region_dict["nsres"])
+    region_dict["w"] = region_current["w"] if region_current["w"] >= stripe_w else region_current["w"] + np.ceil((region_current["w"] - stripe_w) / float(region_dict["ewres"])) * float(region_dict["ewres"])
+    region_dict["n"] = region_current["n"] if region_current["n"] <= stripe_n else region_current["n"] - np.floor((region_current["n"] - stripe_n) / float(region_dict["nsres"])) * float(region_dict["nsres"])
+    region_dict["e"] = region_current["e"] if region_current["e"] <= stripe_e else region_current["e"] - np.floor((region_current["e"] - stripe_e) / float(region_dict["ewres"])) * float(region_dict["ewres"])
     return region_dict
 
 
@@ -734,7 +749,7 @@ def extract_file_info(s3_files, basename=None):
     )
 
 
-def get_geocoding(zip_file, root, geo_bands_dict, region_bounds=None):
+def get_geocoding(zip_file, root, geo_bands_dict, sun_mask=None, region_bounds=None):
     """Get ground control points from NetCDF file"""
     member = str(root / geo_bands_dict["nc_file"])
     nc_file_path = zip_file.extract(member, path=TMP_FILE)
@@ -758,7 +773,10 @@ def get_geocoding(zip_file, root, geo_bands_dict, region_bounds=None):
             nc_bands[band_id] = nc_file_open[band][:]
 
         # Create initial mask
-        mask = nc_bands["lat"][:].mask
+        if sun_mask is not None:
+            mask = np.logical_or(sun_mask, nc_bands["lat"][:].mask)
+        else:
+            mask = nc_bands["lat"][:].mask
 
         if region_bounds:
             # Mask to region
@@ -780,7 +798,8 @@ def get_geocoding(zip_file, root, geo_bands_dict, region_bounds=None):
             )
 
             if mask.all():
-                gs.fatal(_("No valid pixels inside computational region"))
+                gs.warning(_("No valid pixels inside computational region found in {}").format(str(zip_file.filename)))
+                return None, None, None
 
     return nc_bands, mask, resolution
 
@@ -1061,19 +1080,27 @@ def import_s3(s3_file, kwargs, s3_product=None):
         root = members[0].rsplit(".SEN3", maxsplit=1)[0]
         root = Path(f"{root}.SEN3")
         # Check if solar flux raster band is required
-        if mod_flags["r"]:
+        sun_region_bounds = region_bounds.copy()
+        if mod_flags["r"] or kwargs["maximum_solar_angle"]:
             tmp_ascii_sun = TMP_FILE / f"{rmap}_sun_parameters.txt"
             module_queue, sun_region_dict = s3_product.get_sun_parameters(
-                zip_file, root, rmap, tmp_ascii_sun, region_bounds
+                zip_file, root, rmap, tmp_ascii_sun, region_bounds, maximum_solar_angle=kwargs["maximum_solar_angle"]
             )
+            if module_queue is None:
+                return None, None, None
             region_dicts["sun_parameters"] = sun_region_dict
+
+            if kwargs["maximum_solar_angle"]:
+                sun_region_bounds = gs.parse_command("g.region", flags="ugb", quiet=True, **intersect_region(dict(kwargs["current_reg"]), sun_region_dict, align_current=False))
         for stripe, stripe_dict in s3_product.requested_stripe_content.items():
             # Could be parallelized!!!
             # Get geocoding (lat/lon, elevation) and initial mask
             tmp_ascii = TMP_FILE / f"{rmap}_{stripe}.txt"
             nc_bands, mask, resolution = get_geocoding(
-                zip_file, root, stripe_dict["geocoding"], region_bounds=region_bounds
+                zip_file, root, stripe_dict["geocoding"], region_bounds=sun_region_bounds
             )
+            if nc_bands is None:
+                return None, None, None
             fmt = ",".join(["%.12f"] * len(nc_bands))
             for nc_file, bands in stripe_dict["containers"].items():
                 (
@@ -1093,12 +1120,16 @@ def import_s3(s3_file, kwargs, s3_product=None):
                     fmt=fmt,
                 )
                 register_strings.append(register_output)
-            region_dicts[stripe] = write_xyz(
+            stripe_region_dict = write_xyz(
                 tmp_ascii, nc_bands, mask, fmt=fmt, project=True
             )
-            region_dicts[stripe]["ewres"], region_dicts[stripe]["nsres"] = float(
-                resolution[0]
-            ), float(resolution[1])
+            stripe_region_dict["ewres"] = float(resolution[0])
+            stripe_region_dict["nsres"] = float(resolution[1])
+            sun_region_dict_intersect = intersect_region(dict(kwargs["current_reg"]), sun_region_dict, align_current=False)
+            if kwargs["maximum_solar_angle"]:
+                region_dicts[stripe] = intersect_region(sun_region_dict_intersect, stripe_region_dict, align_current=False)
+            else:
+                region_dicts[stripe] = stripe_region_dict
 
     return module_queue, register_strings, region_dicts
 
@@ -1352,19 +1383,13 @@ class S3Product:
 
             return nc_bands, module_queue, meta_information, fmt
 
-    def get_sun_parameters(self, zip_file, root, prefix, tmp_ascii, region_bounds):
+    def get_sun_parameters(self, zip_file, root, prefix, tmp_ascii, region_bounds, maximum_solar_angle=None):
         """https://github.com/sertit/eoreader/blob/main/eoreader/products/optical/s3_slstr_product.py#L862"""
 
         # nc_file = sun_azimuth_dict["nc_file"]
         # Get values
         import_modules = {}
         fmt = "%.12f,%.12f"
-        nc_bands, mask, resolution = get_geocoding(
-            zip_file,
-            root,
-            S3_SUN_PARAMTERS[self.product_type]["geocoding"],
-            region_bounds=region_bounds,
-        )
         member = str(
             root
             / S3_SUN_PARAMTERS[self.product_type]["sun_bands"]["nc_file"].format(
@@ -1372,35 +1397,48 @@ class S3Product:
             )
         )
         nc_file_path = zip_file.extract(member, path=TMP_FILE)
-        sun_parameter_nc = Dataset(nc_file_path)
-        # sun_metadata = get_file_metadata(sun_parameter_nc)
-        for band_id, band in S3_SUN_PARAMTERS[self.product_type]["sun_bands"][
-            "bands"
-        ].items():
-            fmt += ",%.12f"
-            sun_parameter_array = sun_parameter_nc[band.format(self.view)]
-            nc_bands[band_id] = sun_parameter_array[:]
-            map_name = f"{prefix}_{band_id}"
-            if band_id == "solar_zenith":
-                global SUN_ZENITH_ANGLE
-                SUN_ZENITH_ANGLE = map_name
-            import_modules[band_id] = setup_import_multi_module(
-                tmp_ascii,
-                map_name,
-                distance=3,
-                fill_flags="ks",
-                zrange=[-32767,32768],
-                val_col=len(nc_bands),
-                data_type="FCELL",
-                method="mean",
-                solar_flux=None,
+        # sun_region_bounds = region_bounds.copy()
+        with Dataset(nc_file_path) as sun_parameter_nc:
+            if maximum_solar_angle:
+                sun_mask = sun_parameter_nc[S3_SUN_PARAMTERS[self.product_type]["sun_bands"]["bands"]["solar_zenith"].format(self.view)][:] >= float(maximum_solar_angle)
+            nc_bands, mask, resolution = get_geocoding(
+                zip_file,
+                root,
+                S3_SUN_PARAMTERS[self.product_type]["geocoding"],
+                sun_mask=sun_mask if maximum_solar_angle and np.any(sun_mask) else None,
+                region_bounds=region_bounds,
             )
+            if nc_bands is None:
+                return None, None
 
-        # Write to temporary file
-        sun_region_dict = write_xyz(tmp_ascii, nc_bands, mask, fmt=fmt, project=True)
-        sun_region_dict["ewres"], sun_region_dict["nsres"] = float(
-            resolution[0]
-        ), float(resolution[1])
+            # sun_metadata = get_file_metadata(sun_parameter_nc)
+            for band_id, band in S3_SUN_PARAMTERS[self.product_type]["sun_bands"][
+                "bands"
+            ].items():
+                fmt += ",%.12f"
+                sun_parameter_array = sun_parameter_nc[band.format(self.view)]
+                nc_bands[band_id] = sun_parameter_array[:]
+                map_name = f"{prefix}_{band_id}"
+                if band_id == "solar_zenith":
+                    global SUN_ZENITH_ANGLE
+                    SUN_ZENITH_ANGLE = map_name
+                import_modules[band_id] = setup_import_multi_module(
+                    tmp_ascii,
+                    map_name,
+                    distance=3,
+                    fill_flags="ks",
+                    zrange=[-32767,32768],
+                    val_col=len(nc_bands),
+                    data_type="FCELL",
+                    method="mean",
+                    solar_flux=None,
+                )
+
+            # Write to temporary file
+            sun_region_dict = write_xyz(tmp_ascii, nc_bands, mask, fmt=fmt, project=True)
+            sun_region_dict["ewres"], sun_region_dict["nsres"] = float(
+                resolution[0]
+            ), float(resolution[1])
 
         return import_modules, sun_region_dict
 
@@ -1531,6 +1569,19 @@ class S3Band:
         return np_band_array
 
 
+def get_solar_angle_bounds(region_bounds, sun_region_dict):
+    """"""
+    solar_bounds = gs.parse_command("g.region", flags="ugl", **sun_region_dict)
+    print(solar_bounds)
+    solar_bounds["ll_n"] = max(float(solar_bounds["nw_lat"]), float(solar_bounds["ne_lat"]))
+    solar_bounds["ll_s"] = min(float(solar_bounds["sw_lat"]), float(solar_bounds["se_lat"]))
+    if solar_bounds["ll_n"] < float(region_bounds["ll_n"]):
+        region_bounds["ll_n"] = solar_bounds["ll_n"]
+    if float(solar_bounds["ll_s"]) > float(region_bounds["ll_s"]):
+        region_bounds["ll_s"] = solar_bounds["ll_s"]
+    return region_bounds
+
+
 def main():
     """Do the main work"""
     pattern = re.compile(
@@ -1596,6 +1647,7 @@ def main():
         "current_reg": dict(current_region),
         "mod_flags": flags,
         "meta_dict": meta_info_dict,
+        "maximum_solar_angle": float(options["maximum_solar_angle"]) if options["maximum_solar_angle"] else None,
     }
 
     # if flags["p"]:
@@ -1629,25 +1681,28 @@ def main():
         module_list, register_string, region_dict = import_s3(
             s3_file, import_dict, s3_product=s3_product
         )
-        module_queues.append(module_list)
-        register_strings.extend(register_string)
-        region_list.append(region_dict)
-        if not region_dicts:
-            region_dicts = region_dict.copy()
-        else:
-            for stripe_id, region in region_dict.items():
-                if stripe_id not in region_dicts:
-                    region_dicts[stripe_id] = region
-                else:
-                    extend_region(region_dicts[stripe_id], region_dict[stripe_id])
-
+        if module_list is not None:
+            module_queues.append(module_list)
+            register_strings.extend(register_string)
+            region_list.append(region_dict)
+            if not region_dicts:
+                region_dicts = region_dict.copy()
+            else:
+                for stripe_id, region in region_dict.items():
+                    if stripe_id not in region_dicts:
+                        region_dicts[stripe_id] = region
+                    else:
+                        extend_region(region_dicts[stripe_id], region_dict[stripe_id])
+    if not module_queues:
+        gs.warning(_("Nothing to import with the given input"))
+        sys.exit(0)
     stripe_envs = {}
     for stripe_id, stripe_region in region_dicts.items():
         stripe_env = os.environ.copy()
-        if flags["n"] or stripe_id == "sun_parameters":
+        if flags["n"]:
             stripe_env["GRASS_REGION"] = gs.region_env(**adjust_region(stripe_region))
         else:
-            stripe_env["GRASS_REGION"] = gs.region_env(**intersect_region(dict(current_region), stripe_region))
+            stripe_env["GRASS_REGION"] = gs.region_env(**intersect_region(dict(current_region), stripe_region, align_current=stripe_id != "sun_parameters"))
         stripe_envs[stripe_id] = stripe_env
 
     if flags["r"]:
@@ -1662,6 +1717,11 @@ def main():
                 module_list.append(solar_module)
             queue.put(MultiModule(module_list))
         queue.wait()
+        # Here one could zoom to non-null pixels in solar angle map
+        # g.region zoom=zolar_zenith 
+        # if maximum_solar_angle is given in consistently limit 
+        # imported pixels
+
 
     gs.verbose(
         _("Importing scenes {}").format(
@@ -1672,19 +1732,16 @@ def main():
     for band_id, modules in module_queues[0].items():
         if band_id in ["solar_azimuth", "solar_zenith"]:
             continue
-        if flags["n"]:
-            # S3SL2LST product has only "in" stripe and band names have no suffix
-            if band_id[-2:] not in stripe_envs:
-                compute_env = stripe_envs["in"]
-            else:
-                compute_env = stripe_envs[band_id[-2:]]
-            module_list = []
-            for listed_module in modules:
-                listed_module.env_ = compute_env
-                module_list.append(listed_module)
-            queue.put(MultiModule(module_list))
+        # S3SL2LST product has only "in" stripe and band names have no suffix
+        if band_id[-2:] not in stripe_envs:
+            compute_env = stripe_envs["in"]
         else:
-            queue.put(MultiModule(modules))
+            compute_env = stripe_envs[band_id[-2:]]
+        module_list = []
+        for listed_module in modules:
+            listed_module.env_ = compute_env
+            module_list.append(listed_module)
+        queue.put(MultiModule(module_list))
     queue.wait()
 
     # Update map support information
