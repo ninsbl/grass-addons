@@ -1742,14 +1742,19 @@ def main():
         queue.put(MultiModule(module_list))
     queue.wait()
 
-    # Update map support information
+    # Update map support information and filter out empty maps
+    # Empty maps may occure because of a lack of valid data within the comutational region
     t_register_strings = []
     queue = ParallelModuleQueue(nprocs)
-    gs.verbose(_("Writing metadata to maps..."))
+    gs.verbose(_("Writing metadata to maps and filtering empty maps..."))
     for mapname, metadata in consolidate_metadata_dicts(register_strings).items():
         mapname = (
             mapname if not flags["r"] else mapname.replace("radiance", "reflectance")
         )
+        if not gs.raster_info(mapname)["max"]:
+            gs.warning(("Raster map {} is empty. Removing...").format(mapname))
+            gs.run_command("g.remove", type="raster", name=mapname, flags="f", quiet=True)
+            continue
         metadata["semantic_label"] = (
             metadata["semantic_label"]
             if not flags["r"]
@@ -1832,14 +1837,13 @@ def main():
 
     # Write t.register file if requested
     if options["register_output"]:
+        t_register_strings = "\n".join(t_register_strings) if t_register_strings else ""
         gs.verbose(
             _("Writing register file <{}>...").format(options["register_output"])
         )
-        Path(options["register_output"]).write_text(
-            "\n".join(t_register_strings) + "\n", encoding="UTF8"
-        )
+        Path(options["register_output"]).write_text(t_register_strings + "\n", encoding="UTF8")
     else:
-        print("\n".join(t_register_strings))
+        print(t_register_strings)
     return 0
 
 
