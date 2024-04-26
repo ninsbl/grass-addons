@@ -1836,8 +1836,8 @@ def main():
     queue.wait()
 
     # Write t.register file if requested
+    t_register_strings = "\n".join(t_register_strings) if t_register_strings else ""
     if options["register_output"]:
-        t_register_strings = "\n".join(t_register_strings) if t_register_strings else ""
         gs.verbose(
             _("Writing register file <{}>...").format(options["register_output"])
         )
