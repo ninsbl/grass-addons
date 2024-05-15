@@ -919,7 +919,7 @@ def get_file_metadata(nc_dataset):
 
 
 def get_band_metadata(
-    band, nc_variable, fmt, file_metadata=None, basename=None, module_flags=None
+    band_tuple, nc_variable, fmt, file_metadata=None, basename=None, to_celsius=False
 ):
     """Extract band metadata from NetCDF variable"""
     metadata = file_metadata.copy()
@@ -927,20 +927,20 @@ def get_band_metadata(
     band_attrs = nc_variable.ncattrs()
 
     # Define variable name
-    varname_short = band.full_name
+    varname_short = band_tuple[1]
     datatype = str(nc_variable[:].dtype)
 
     # Define map name
     mapname = f"{basename}_{varname_short}"
     metadata["mapname"] = mapname
 
-    # band_title = nc_variable.long_name if "long_name" in band_attrs else band.full_name
+    # band_title = nc_variable.long_name if "long_name" in band_attrs else band_tuple[1]
 
     # Define unit
     unit = nc_variable.units if "units" in band_attrs else None
     unit = (
         "degree_celsius"
-        if band.band_id.startswith("LST") and module_flags["c"]
+        if band_tuple[0].startswith("LST") and to_celsius
         else unit
     )
     metadata["unit"] = unit
@@ -949,7 +949,7 @@ def get_band_metadata(
     if datatype not in DTYPE_TO_GRASS:
         gs.fatal(
             _("Unsupported datatype {dt} in band {band}").format(
-                dt=datatype, band=band.full_name
+                dt=datatype, band=band_tuple[1]
             )
         )
     if datatype in ["uint8", "uint16"]:
@@ -1081,9 +1081,10 @@ def import_s3(s3_file, kwargs, s3_product=None):
         sun_region_bounds = region_bounds.copy()
         if mod_flags["r"] or kwargs["maximum_solar_angle"]:
             tmp_ascii_sun = TMP_FILE / f"{rmap}_sun_parameters.txt"
-            module_queue, sun_region_dict = s3_product.get_sun_parameters(
+            module_queue, register_output, sun_region_dict = s3_product.get_sun_parameters(
                 zip_file, root, rmap, tmp_ascii_sun, region_bounds, maximum_solar_angle=kwargs["maximum_solar_angle"]
             )
+            register_strings.append(register_output)
             if module_queue is None:
                 return None, None, None
             region_dicts["sun_parameters"] = sun_region_dict
@@ -1296,12 +1297,12 @@ class S3Product:
 
                 # Collect band metadata
                 metadata = get_band_metadata(
-                    band,
+                    (band.band_id, band.full_name),
                     nc_variable,
                     fmt,
                     file_metadata=file_metadata,
                     basename=prefix,
-                    module_flags=module_flags,
+                    to_celsius=module_flags["c"],
                 )
                 fmt = metadata[1]
 
@@ -1387,6 +1388,7 @@ class S3Product:
         # nc_file = sun_azimuth_dict["nc_file"]
         # Get values
         import_modules = {}
+        meta_information = {}
         fmt = "%.12f,%.12f"
         member = str(
             root
@@ -1397,6 +1399,7 @@ class S3Product:
         nc_file_path = zip_file.extract(member, path=TMP_FILE)
         # sun_region_bounds = region_bounds.copy()
         with Dataset(nc_file_path) as sun_parameter_nc:
+            file_metadata = get_file_metadata(sun_parameter_nc)
             if maximum_solar_angle:
                 sun_mask = sun_parameter_nc[S3_SUN_PARAMTERS[self.product_type]["sun_bands"]["bands"]["solar_zenith"].format(self.view)][:] >= float(maximum_solar_angle)
             nc_bands, mask, resolution = get_geocoding(
@@ -1407,14 +1410,24 @@ class S3Product:
                 region_bounds=region_bounds,
             )
             if nc_bands is None:
-                return None, None
+                return None, None, None
 
             # sun_metadata = get_file_metadata(sun_parameter_nc)
             for band_id, band in S3_SUN_PARAMTERS[self.product_type]["sun_bands"][
                 "bands"
             ].items():
+                band = band.format(self.view)
+                sun_parameter_array = sun_parameter_nc[band]
+
+                metadata = get_band_metadata(
+                    (band_id, band),
+                    sun_parameter_array,
+                    fmt,
+                    file_metadata=file_metadata,
+                    basename=prefix,
+                )
+
                 fmt += ",%.12f"
-                sun_parameter_array = sun_parameter_nc[band.format(self.view)]
                 nc_bands[band_id] = sun_parameter_array[:]
                 map_name = f"{prefix}_{band_id}"
                 if band_id == "solar_zenith":
@@ -1431,6 +1444,20 @@ class S3Product:
                     method="mean",
                     solar_flux=None,
                 )
+                meta_information[map_name] = {
+                    "semantic_label": f"S3_{band_id}",
+                    "unit": metadata[0]["unit"],
+                    **{
+                        a: np_as_scalar(sun_parameter_nc.getncattr(a))
+                        for a in sun_parameter_nc.ncattrs()
+                    },
+                    **{"variable": band},
+                    **{
+                        a: np_as_scalar(sun_parameter_nc[band].getncattr(a))
+                        for a in sun_parameter_nc[band].ncattrs()
+                    },
+                }
+
 
             # Write to temporary file
             sun_region_dict = write_xyz(tmp_ascii, nc_bands, mask, fmt=fmt, project=True)
@@ -1438,7 +1465,7 @@ class S3Product:
                 resolution[0]
             ), float(resolution[1])
 
-        return import_modules, sun_region_dict
+        return import_modules, meta_information, sun_region_dict
 
 
 class S3Band:
@@ -1570,7 +1597,6 @@ class S3Band:
 def get_solar_angle_bounds(region_bounds, sun_region_dict):
     """"""
     solar_bounds = gs.parse_command("g.region", flags="ugl", **sun_region_dict)
-    print(solar_bounds)
     solar_bounds["ll_n"] = max(float(solar_bounds["nw_lat"]), float(solar_bounds["ne_lat"]))
     solar_bounds["ll_s"] = min(float(solar_bounds["sw_lat"]), float(solar_bounds["se_lat"]))
     if solar_bounds["ll_n"] < float(region_bounds["ll_n"]):
