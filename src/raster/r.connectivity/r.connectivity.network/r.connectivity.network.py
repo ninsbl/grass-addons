@@ -202,16 +202,20 @@ ToDo:
 
 import atexit
 import os
-from io import BytesIO
+from io import StringIO
 import sys
 import platform
 import warnings
+
+from pathlib import Path
+
 import numpy as np
 import matplotlib
 
 # Required for Windows
 matplotlib.use("wx")
 import matplotlib.pyplot as plt
+
 import grass.script as gscript
 import grass.script.task as task
 import grass.script.db as grass_db
@@ -238,7 +242,6 @@ def cleanup():
 
 def is_number(string):
     """Check if a string can be converted to numeric"""
-
     try:
         complex(string)  # for int, long, float and complex
     except ValueError:
@@ -249,6 +252,29 @@ def is_number(string):
 
 def main():
     """Do the main work"""
+
+    options = {
+        "prefix": "hws_connectivity_net",
+        "input": "hws_connectivity_edges",
+        # "hws_connectivity_shortest_paths",
+        # "hws_connectivity_vertices",
+        "convergence_threshold": "1",
+        "base": "-3.0",
+        "exponent": "-4.5",
+        "connectivity_cutoff": "10000",
+        "lnbh_cutoff": "3.0",
+        "cl_thresh": "0.05",
+        "qml_style": "./",
+        "kernel_plot": "./kp.ps",
+        "overview_plot": "./op.ps",
+        "cores": "2",
+    }
+
+    flags = {
+        "x": False,
+        "y": True,
+        "r": True,
+    }
 
     # Lazy import
     try:
@@ -281,8 +307,9 @@ def main():
 
     cd_cutoff = connectivity_cutoff
 
-    kernel_plot = options["kernel_plot"]
-    overview_plot = options["overview_plot"]
+    qml_style_dir = Path(options["qml_style"]) if options["qml_style"] else None
+    kernel_plot = Path(options["kernel_plot"]) if options["kernel_plot"] else None
+    overview_plot = Path(options["overview_plot"]) if options["overview_plot"] else None
 
     verbose = gscript.verbosity() == 3
     overwrite = gscript.overwrite()
@@ -304,43 +331,43 @@ def main():
             )
 
     if qml_style_dir:
-        if not os.path.exists(qml_style_dir):
+        if not qml_style_dir.exists():
             gscript.fatal(
                 _(
                     'QML output requested but directory "{}" \
                         does not exists.'
-                ).format(qml_style_dir)
+                ).format(str(qml_style_dir))
             )
-        if not os.path.isdir(qml_style_dir):
+        if not qml_style_dir.is_dir():
             gscript.fatal(
                 _(
                     'QML output requested but "{}" is not a \
                         directory.'
-                ).format(qml_style_dir)
+                ).format(str(qml_style_dir))
             )
         if not os.access(qml_style_dir, os.R_OK):
             gscript.fatal(
                 _(
                     'Output directory "{}" for QML files is not \
                         writable.'
-                ).format(qml_style_dir)
+                ).format(str(qml_style_dir))
             )
 
     for plot in [kernel_plot, overview_plot]:
         if plot:
-            if not os.path.exists(os.path.dirname(plot)):
+            if not plot.parent.exists():
                 gscript.fatal(
                     _(
                         'Directory for output "{}" does not \
                             exists.'
-                    ).format(plot)
+                    ).format(str(plot))
                 )
-            if not os.access(os.path.dirname(plot), os.R_OK):
+            if not os.access(plot.parent, os.R_OK):
                 gscript.fatal(
                     _(
                         'Output directory "{}" is not \
                             writable.'
-                    ).format(plot)
+                    ).format(str(plot))
                 )
 
     # Visualise negative exponential decay kernel and exit
@@ -348,9 +375,6 @@ def main():
 
     # Calculate edge betweenness community (default is do not)
     # y_flag = flags['y']
-
-    # Install missing R packages
-    i_flag = flags["i"]
 
     # Remove indirect connections from network
     r_flag = flags["r"]
@@ -372,6 +396,7 @@ def main():
     pop_proxy = dist_cmd_dict[1]["pop_proxy"]
 
     in_vertices = "{}_vertices".format(dist_prefix)
+    in_edges = "{}_edges".format(dist_prefix)
 
     # OS adjustment
     os_type = platform.system()
@@ -435,11 +460,10 @@ def main():
     driver = db_connection["driver"]
     database = db_name
     schema = db_connection["schema"]
-    command = command
 
     gscript.verbose(_("Reading and preparing input data...\n"))
-    vertices = np.gefromtext(
-        BytesIO(
+    vertices = np.genfromtxt(
+        StringIO(
             gscript.read_command(
                 "v.db.select",
                 flags="c",
@@ -448,14 +472,14 @@ def main():
                 separator=",",
             ).strip("\n")
         ),
-        dtype=None,
-        names=["patch_id", "pop_proxy"],
+        # dtype=None,
+        # names=["patch_id", "pop_proxy"],
         delimiter=",",
     )
 
     # Read edge data
-    edges = np.gefromtext(
-        BytesIO(
+    edges = np.genfromtxt(
+        StringIO(
             gscript.read_command(
                 "v.db.select",
                 flags="c",
@@ -464,8 +488,8 @@ def main():
                 separator=",",
             ).strip("\n")
         ),
-        dtype=None,
-        names=["cat", "from_patch", "to_patch", "distance"],
+        # dtype=None,
+        # names=["cat", "from_patch", "to_patch", "distance"],
         delimiter=",",
     )
 
@@ -483,26 +507,36 @@ def main():
     # Build directed graph
     gscript.verbose(_("Building the graph..."))
 
-    g = Graph().as_directed()
-    g.add_vertices(vertices[:, 0].astype("i").astype("S"))
-    g.vs["patch_id"] = vertices[:, 0].astype("i")
-    g.vs["pop_proxy"] = vertices[:, 1]
+    # Vertices are 0-indexed
+    g = Graph(
+        n=np.max(vertices[:, 0].astype("i")) + 1,
+        edges=edges[:, [1, 2]].astype("i"),
+        directed=True,
+    )
 
-    g.add_edges(edges[:, [1, 2]].astype("i").astype("S"))
+    # Add edge attributes
     g.es["cat"] = edges[:, 0].astype("i")
-    g.es["from_patch"] = edges[:, 1].astype("i").astype("S")
-    g.es["to_patch"] = edges[:, 2].astype("i").astype("S")
-    g.es["cost_distance"] = edges[:, 3]
+    g.es["from_patch"] = edges[:, 1].astype("i").astype("U")
+    g.es["to_patch"] = edges[:, 2].astype("i").astype("U")
+    g.es["cost_distance"] = edges[:, 3].astype("float")
+
+    # Keep only existing nodes
+    g = g.subgraph(vertices[:, 0].astype("i"))
+
+    # Add vertex attributes
+    g.vs["patch_id"] = vertices[:, 0].astype("i")
+    g.vs["pop_proxy"] = vertices[:, 1].astype("float")
 
     # g = add.edges(g, t(edges), con_id=e$con_id, con_id_u=e$con_id_u, from_p=e$from_p, from_pop=e$from_pop, to_p=e$to_p, to_pop=e$to_pop, cost_distance=e$cost_distance, cd_u=e$cd_u, distance_weight_e=e$distance_weight_e, distance_weight_e_ud=e$distance_weight_e_ud, mf_o=e$mf_o, mf_o_inv=e$mf_o_inv, mf_i=e$mf_i, mf_i_inv=e$mf_i_inv, mf_u=e$mf_u, mf_inv_u=e$mf_inv_u, cf=e$cf, cf_inv=e$cf_inv, cf_u=e$cf_u, cf_inv_u=e$cf_inv_u)
 
     ##Remove connections longer than cost distance threshold if requested
-    # if(remove_longer_cutoff == 1) {{
-    # con_id_True =  e_grouped_df$con_id[grep(True, e_grouped_df$dist_ud<cd_cutoff)]
-    # e_grouped_df_pre = merge(data.frame(con_id=con_id_True), e_grouped_df)
-    # con_id_u_df = data.frame(con_id_u_old=unique(e_grouped_df_pre$con_id_u), con_id_u=1:length(unique(e_grouped_df_pre$con_id_u)))
-    # e_grouped_df = merge(data.frame(con_id_old=e_grouped_df_pre$con_id, con_id_u_old=e_grouped_df_pre$con_id_u, con_id=1:length(e_grouped_df_pre$con_id), from_p=e_grouped_df_pre$from_p, to_p=e_grouped_df_pre$to_p, dist=e_grouped_df_pre$dist, dist_ud=e_grouped_df_pre$dist_ud), con_id_u_df, all.x=True)
-    # }}
+    if connectivity_cutoff:
+        pass
+        # con_id_True =  e_grouped_df$con_id[grep(True, e_grouped_df$dist_ud<cd_cutoff)]
+        # e_grouped_df_pre = merge(data.frame(con_id=con_id_True), e_grouped_df)
+        # con_id_u_df = data.frame(con_id_u_old=unique(e_grouped_df_pre$con_id_u), con_id_u=1:length(unique(e_grouped_df_pre$con_id_u)))
+        # e_grouped_df = merge(data.frame(con_id_old=e_grouped_df_pre$con_id, con_id_u_old=e_grouped_df_pre$con_id_u, con_id=1:length(e_grouped_df_pre$con_id), from_p=e_grouped_df_pre$from_p, to_p=e_grouped_df_pre$to_p, dist=e_grouped_df_pre$dist, dist_ud=e_grouped_df_pre$dist_ud), con_id_u_df, all.x=True)
+        # }}
 
     # Merge vertex and grouped edge data
     # Can be done in igraph
@@ -516,6 +550,8 @@ def main():
     )  # distance_weight_e
     # out_areal_distance_weight_e = e$from_pop*distance_weight_e
     # in_areal_distance_weight_e = e$to_pop*distance_weight_e
+    g.es["from_pop"] = [e.source_vertex["pop_proxy"] for e in g.es]
+    g.es["to_pop"] = [e.target_vertex["pop_proxy"] for e in g.es]
 
     g.es["maximum_flow_out"] = g.es["from_pop"] * g.es["exponential_distance_weight"]
     g.es["maximum_flow_in"] = g.es["to_pop"] * g.es["exponential_distance_weight"]
@@ -526,6 +562,10 @@ def main():
     g.es["maximum_flow_out_inverse"] = g.es["mf_o"] ** -1
     g.es["maximum_flow_in_inverse"] = g.es["mf_i"] ** -1
     # g.es["maximum_flow_sum_inverse"] = ((g.es["maximum_flow_sum"]*-1)-min(g.es["maximum_flow_sum"]*-1))*(ifelse(max(g.es["maximum_flow_sum"])>10000000000000000,10000000000000000,max(g.es["maximum_flow_sum"]))-ifelse(min(g.es["maximum_flow_sum"])<0.000000000001,0.000000000001,min(g.es["maximum_flow_sum"])))/(max(g.es["maximum_flow_sum"]*-1)-min(g.es["maximum_flow_sum"]*-1))+ifelse(min(g.es["maximum_flow_sum"])<0.000000000001,0.000000000001,min(g.es["maximum_flow_sum"]))
+
+    gu = g.as_undirected(
+        combine_edges=dict(cost_distance="mean", from_patch="first", to_patch="first")
+    )
 
     """
     flow_df = data.frame(from_p=e$from_p, mf_i=mf_i)
@@ -625,18 +665,19 @@ def main():
     # g.es["isshort[grep(True, g.es["con_id_u %in% g_ud.es["con_id_u[grep(False, g_ud.es["isshort)])] = False
 
     # Remove indirect connections if requested
-    if remove_indirect == 1:
+    if remove_indirect:
         g_ud_d = deepcopy(g_ud)
         g_ud_d.delete.edges(g_ud.es.select(is_short_eq=0))
 
     # Remove connections above connectivity threshold if requested
-    """
     if connectivity_cutoff >= 0.0:
         g_ud_cd = deepcopy(g_ud)
-        g_ud_cd = g_ud_cd.delete_edges(E(g_ud)[grep(True, g_ud.es["cd_u>=connectivity_cutoff)])
+        g_ud_cd = g_ud_cd.delete_edges(g_ud.es.select(cd_u_gt=connectivity_cutoff))
         g_ud_d_cd = deepcopy(g_ud_d)
-        g_ud_d_cd = g_ud_d_cd.delete_edges(E(g_ud_d)[grep(True, g_ud_d.es["cd_u>=connectivity_cutoff)])
-    """
+        g_ud_d_cd = g_ud_d_cd.delete_edges(
+            g_ud_d_cd.delete_edges(g_ud_d.es.select(cd_u_gt=connectivity_cutoff))
+        )
+
     ########################################################################
     ### Analysis on graph level
     ########################################################################
@@ -653,7 +694,9 @@ def main():
     ########################################################################
     ###### Calculate number of clusters
     # On the undirected graph with only direct edges and on the undirected graph with only direct edges shorter cost distance threshold
-    cl_no_d = g_ud_d.clusters()["no"]
+    g_ud_d_cc = g_ud_d.connected_components()
+    cl_no_d = len(g_ud_d_cc.sizes())
+
     cl_no_d_cd = g_ud_d_cd.clusters()["no"]
 
     """
@@ -661,10 +704,10 @@ def main():
     cls_size_d_cd = as.vector(gsummary(groupedData(pop_size ~ 1 | cl, data.frame(cl=clusters(g_ud_d_cd)$membership, pop_size=g_ud_d_cd.vs["pop_proxy), order.groups=True, FUN=sum), sum)$pop_size)
     """
 
-    cl_max_size_d = max(cls_size_d)
+    cl_max_size_d = max(g_ud_d_cc.sizes())
     cl_max_size_d_cd = max(cls_size_d_cd)
 
-    cl_mean_size_d = mean(cls_size_d)
+    cl_mean_size_d = mean(g_ud_d_cc.sizes())
     cl_mean_size_d_cd = mean(cls_size_d_cd)
 
     diam = g_ud.diameter(directed=False, unconnected=True, weights=g_ud.es["cd_u"])
@@ -672,13 +715,15 @@ def main():
         directed=False, unconnected=True, weights=g_ud_d.es["cd_u"]
     )
     diam_d_cd = g_ud_d_cd.diameter(
-        directed=False, unconnected=True, weights=g_ud_d_cd.es["cd_u"]
+        directed=False,
+        # unconnected=True,
+        weights=g_ud_d_cd.es["cd_u"],
     )
 
-    density = g.density(g, loops=False)
-    density_u = g_ud.density(g_ud, loops=False)
-    density_ud = g_ud_d.density(g_ud_d, loops=False)
-    density_udc = g_ud_d_cd.density(g_ud_d_cd, loops=False)
+    density = g.density(loops=False)
+    density_u = g_ud.density(loops=False)
+    density_ud = g_ud_d.density(loops=False)
+    density_udc = g_ud_d_cd.density(loops=False)
 
     """
     if network_overview_ps:
@@ -708,6 +753,7 @@ def main():
         # Lable axis 4!!!
         # axis(4, seq.int(0, 100, 25), yaxs="i", labels=seq.int(0, ceiling((as.integer(edges_n)/(10^(nchar(as.integer(edges_n))-2))))*(10^(nchar(as.integer(edges_n))-2)), ceiling((as.integer(edges_n)/(10^(nchar(as.integer(edges_n))-2))))*(10^(nchar(as.integer(edges_n))-2))/4))
     """
+
     ########################################################################
     ###Analysis on edge level
     ########################################################################
@@ -1089,50 +1135,64 @@ def main():
     g_ud_cd.vs["nbh_s_uc = as.integer(neighborhood.size(g_ud_cd, 1, nodes=V(g_ud_cd), mode=c("all")))
     ### Calculate local neighborhood size
     g_ud_cd.vs["nbh_sl_uc = as.integer(neighborhood.size(g_ud_cd, lnbh_cutoff, nodes=V(g_ud_cd), mode=c("all")))
+    """
 
-    if (db_driver == "sqlite") {{
-    con = dbConnect(RSQLite::SQLite(), dbname = db)
-    }} else {{
-    con = dbConnect(PostgreSQL::PostgreSQL(), dbname = db)
-    }}
+    if db_driver == "sqlite":
+        con = dbConnect  # (RSQLite::SQLite(), dbname = db)
+    else:
+        con = dbConnect  # (PostgreSQL::PostgreSQL(), dbname = db)
 
     ##############################################
     # Export network overview measures
-    grml = rbind(c("Command", command),
-    c("Number of vertices", vertices_n),
-    c("Number of edges (undirected)", edges_n),
-    c("Number of direct edges (undirected)", edges_n_d),
-    c("Number of edges shorter than cost distance threshold (undirected)", edges_n_cd),
-    c("Number of direct edges shorter than cost distance threshold (undirected)", edges_n_d_cd),
-    c("Number of clusters of the entire graph", cl_no_d),
-    c("Number of clusters of the graph with only edges shorter cost distance threshold", cl_no_d_cd),
-    c("Size of the largest cluster of the entire graph", cl_max_size_d),
-    c("Size of the largest cluster of the graph with only edges shorter cost distance threshold", cl_max_size_d_cd),
-    c("Average size of the clusters of the entire graph", cl_mean_size_d),
-    c("Average size of the clusters of the graph with only edges shorter cost distance threshold", cl_mean_size_d_cd),
-    c("Diameter of the entire graph (undirected)", diam),
-    c("Diameter of the graph with only direct edges (undirected)", diam_d),
-    c("Diameter of the graph with only edges shorter cost distance threshold", diam_d_cd),
-    c("Density of the entire graph (directed)", density),
-    c("Density of the entire graph (undirected)", density_u),
-    c("Density of the graph with only direct edges (undirected)", density_ud))
+    grml = [
+        f"Command,{command}",
+        f"Number of vertices,{vertices_n}",
+        f"Number of edges (undirected),{edges_n}",
+        f"Number of direct edges (undirected),{edges_n_d}",
+        f"Number of edges shorter than cost distance threshold (undirected),{edges_n_cd}",
+        f"Number of direct edges shorter than cost distance threshold (undirected),{edges_n_d_cd}",
+        f"Number of clusters of the entire graph,{cl_no_d}",
+        f"Number of clusters of the graph with only edges shorter cost distance threshold,{cl_no_d_cd}",
+        f"Size of the largest cluster of the entire graph,{cl_max_size_d}",
+        f"Size of the largest cluster of the graph with only edges shorter cost distance threshold,{cl_max_size_d_cd}",
+        f"Average size of the clusters of the entire graph,{cl_mean_size_d}",
+        f"Average size of the clusters of the graph with only edges shorter cost distance threshold,{cl_mean_size_d_cd}",
+        f"Diameter of the entire graph (undirected),{diam}",
+        f"Diameter of the graph with only direct edges (undirected),{diam_d}",
+        f"Diameter of the graph with only edges shorter cost distance threshold,{diam_d_cd}",
+        f"Density of the entire graph (directed),{density}",
+        f"Density of the entire graph (undirected),{density_u}",
+        f"Density of the graph with only direct edges (undirected),{density_ud}",
+    ]
 
     if cl_thresh > 0:
-        grml = rbind(grml,
-    c("Density of the graph with only edges shorter cost distance threshold",  density_udc),
-    c("Modularity (from iebc) of the entire graph (undirected) weighted by cf", cf_iebc_u_mod),
-    c("Number of communities (at maximum modularity score (from iebc)) of the entire (undirected) graph weighted by cf", com_no_u),
-    c("com_sizes_u", toString(com_sizes_u, sep=',')),
-    c("com_sizes_u_names", toString(com_sizes_u_names, sep=','))
-    )
+        grml += [
+            (
+                "Density of the graph with only edges shorter cost distance threshold",
+                density_udc,
+            ),
+            (
+                "Modularity (from iebc) of the entire graph (undirected) weighted by cf",
+                cf_iebc_u_mod,
+            ),
+            (
+                "Number of communities (at maximum modularity score (from iebc)) of the entire (undirected) graph weighted by cf",
+                com_no_u,
+            ),
+            ("com_sizes_u", ",".join(com_sizes_u)),
+            ("com_sizes_u_names", ",".join(com_sizes_u_names)),
+        ]
 
-        network_overview_measures = data.frame(
-            measure=grml[,1],
-            value=grml[,2])
+        network_overview_measures = data.frame(measure=grml[1], value=grml[2])
 
     # Write dataframe
-    dbWriteTable(con, network_output, network_overview_measures, overwrite=overwrite, row.names=False)
-    """
+    dbWriteTable(
+        con,
+        network_output,
+        network_overview_measures,
+        overwrite=overwrite,
+        row_names=False,
+    )
 
     ###############################################################
     ##### Merge vertexmeasures in a dataframe and save it
@@ -1203,26 +1263,31 @@ def main():
     # edge_export_df_ud = as.data.frame(g_ud.es["con_id_u)
 
     ####Adjust edge attributes for the undirected graphs first
-    g_ud = remove.edge.attribute(g_ud, "con_id")
-    g_ud = remove.edge.attribute(g_ud, "con_id_u")
-    g_ud = remove.edge.attribute(g_ud, "from_p")
-    g_ud = remove.edge.attribute(g_ud, "from_pop")
-    g_ud = remove.edge.attribute(g_ud, "to_p")
-    g_ud = remove.edge.attribute(g_ud, "to_pop")
-    g_ud = remove.edge.attribute(g_ud, "cost_distance")
-    g_ud = remove.edge.attribute(g_ud, "cd_u")
-    g_ud = remove.edge.attribute(g_ud, "distance_weight_e")
-    # g_ud = remove.edge.attribute(g_ud, "distance_weight_e_ud")
-    g_ud = remove.edge.attribute(g_ud, "mf_o")
-    g_ud = remove.edge.attribute(g_ud, "mf_i")
-    g_ud = remove.edge.attribute(g_ud, "mf_o_inv")
-    g_ud = remove.edge.attribute(g_ud, "mf_i_inv")
-    g_ud = remove.edge.attribute(g_ud, "mf_u")
-    g_ud = remove.edge.attribute(g_ud, "mf_inv_u")
-    g_ud = remove.edge.attribute(g_ud, "cf")
-    g_ud = remove.edge.attribute(g_ud, "cf_inv")
-    g_ud = remove.edge.attribute(g_ud, "cf_u")
-    g_ud = remove.edge.attribute(g_ud, "cf_inv_u")
+    for attribute in [
+        "con_id",
+        "con_id_u",
+        "from_p",
+        "from_pop",
+        "to_p",
+        "to_pop",
+        "cost_distance",
+        "cd_u",
+        "distance_weight_e",
+        # "distance_weight_e_ud",
+        "mf_o",
+        "mf_i",
+        "mf_o_inv",
+        "mf_i_inv",
+        "mf_u",
+        "mf_inv_u",
+        "cf",
+        "cf_inv",
+        "cf_u",
+        "cf_inv_u",
+    ]:
+        g_ud = remove.edge.attribute(g_ud, attribute)
+        g_ud_d = remove.edge.attribute(g_ud_d, attribute)
+        g_ud_d_cd = remove.edge.attribute(g_ud_d_cd, attribute)
 
     edge_attribute_list = list.edge.attributes(g_ud)
 
@@ -1236,30 +1301,9 @@ def main():
     # edge_export_df_ud_d = as.data.frame(g_ud_d.es["con_id_u)
 
     ####Adjust edge attributes for the undirected graph with only direct edges
-    g_ud_d = remove.edge.attribute(g_ud_d, "con_id")
-    g_ud_d = remove.edge.attribute(g_ud_d, "con_id_u")
-    g_ud_d = remove.edge.attribute(g_ud_d, "from_p")
-    g_ud_d = remove.edge.attribute(g_ud_d, "from_pop")
-    g_ud_d = remove.edge.attribute(g_ud_d, "to_p")
-    g_ud_d = remove.edge.attribute(g_ud_d, "to_pop")
-    g_ud_d = remove.edge.attribute(g_ud_d, "cost_distance")
-    g_ud_d = remove.edge.attribute(g_ud_d, "cd_u")
-    g_ud_d = remove.edge.attribute(g_ud_d, "distance_weight_e")
-    # g_ud_d = remove.edge.attribute(g_ud_d, "distance_weight_e_ud")
-    g_ud_d = remove.edge.attribute(g_ud_d, "mf_o")
-    g_ud_d = remove.edge.attribute(g_ud_d, "mf_i")
-    g_ud_d = remove.edge.attribute(g_ud_d, "mf_o_inv")
-    g_ud_d = remove.edge.attribute(g_ud_d, "mf_i_inv")
-    g_ud_d = remove.edge.attribute(g_ud_d, "mf_u")
-    g_ud_d = remove.edge.attribute(g_ud_d, "mf_inv_u")
-    g_ud_d = remove.edge.attribute(g_ud_d, "cf")
-    g_ud_d = remove.edge.attribute(g_ud_d, "cf_inv")
-    g_ud_d = remove.edge.attribute(g_ud_d, "cf_u")
-    g_ud_d = remove.edge.attribute(g_ud_d, "cf_inv_u")
-    g_ud_d = remove.edge.attribute(g_ud_d, "isshort")
-    g_ud_d = remove.edge.attribute(g_ud_d, "isshort_cd")
-    g_ud_d = remove.edge.attribute(g_ud_d, "isshort_mf")
-    g_ud_d = remove.edge.attribute(g_ud_d, "isshort_cf")
+    for attribute in ["isshort", "isshort_cd", "isshort_mf", "isshort_cf"]:
+        g_ud_d = remove.edge.attribute(g_ud_d, attribute)
+        g_ud_d_cd = remove.edge.attribute(g_ud_d_cd, attribute)
 
     edge_attribute_list = list.edge.attributes(g_ud_d)
 
@@ -1274,30 +1318,6 @@ def main():
     # edge_export_df_ud_d_cd = as.data.frame(E(g_ud_d_cd)$con_id_u)
 
     ####Adjust edge attributes for the undirected graph with only direct edges
-    g_ud_d_cd = remove.edge.attribute(g_ud_d_cd, "con_id")
-    g_ud_d_cd = remove.edge.attribute(g_ud_d_cd, "con_id_u")
-    g_ud_d_cd = remove.edge.attribute(g_ud_d_cd, "from_p")
-    g_ud_d_cd = remove.edge.attribute(g_ud_d_cd, "from_pop")
-    g_ud_d_cd = remove.edge.attribute(g_ud_d_cd, "to_p")
-    g_ud_d_cd = remove.edge.attribute(g_ud_d_cd, "to_pop")
-    g_ud_d_cd = remove.edge.attribute(g_ud_d_cd, "cost_distance")
-    g_ud_d_cd = remove.edge.attribute(g_ud_d_cd, "cd_u")
-    g_ud_d_cd = remove.edge.attribute(g_ud_d_cd, "distance_weight_e")
-    # g_ud_d_cd = remove.edge.attribute(g_ud_d_cd, "distance_weight_e_ud")
-    g_ud_d_cd = remove.edge.attribute(g_ud_d_cd, "mf_o")
-    g_ud_d_cd = remove.edge.attribute(g_ud_d_cd, "mf_i")
-    g_ud_d_cd = remove.edge.attribute(g_ud_d_cd, "mf_o_inv")
-    g_ud_d_cd = remove.edge.attribute(g_ud_d_cd, "mf_i_inv")
-    g_ud_d_cd = remove.edge.attribute(g_ud_d_cd, "mf_u")
-    g_ud_d_cd = remove.edge.attribute(g_ud_d_cd, "mf_inv_u")
-    g_ud_d_cd = remove.edge.attribute(g_ud_d_cd, "cf")
-    g_ud_d_cd = remove.edge.attribute(g_ud_d_cd, "cf_inv")
-    g_ud_d_cd = remove.edge.attribute(g_ud_d_cd, "cf_u")
-    g_ud_d_cd = remove.edge.attribute(g_ud_d_cd, "cf_inv_u")
-    g_ud_d_cd = remove.edge.attribute(g_ud_d_cd, "isshort")
-    g_ud_d_cd = remove.edge.attribute(g_ud_d_cd, "isshort_cd")
-    g_ud_d_cd = remove.edge.attribute(g_ud_d_cd, "isshort_mf")
-    g_ud_d_cd = remove.edge.attribute(g_ud_d_cd, "isshort_cf")
 
     edge_attribute_list = list.edge.attributes(g_ud_d_cd)
 
@@ -1436,78 +1456,68 @@ def main():
             ranges = str()
             qml += "    <ranges>"
             for quant in range(no_quantile):
-                ranges = append(
-                    ranges,
-                    paste(
-                        '      <range symbol="',
-                        (quant - 1),
-                        '" lower="',
-                        attribute_quantile[quant],
-                        '" upper="',
-                        attribute_quantile[(quant + 1)],
-                        '" label="',
-                        round(attribute_quantile[quant], 4),
-                        " - ",
-                        round(attribute_quantile[(quant + 1)], 4),
-                        '">',
-                        sep="",
-                    ),
+                ranges += (
+                    '      <range symbol="',
+                    (quant - 1),
+                    '" lower="',
+                    attribute_quantile[quant],
+                    '" upper="',
+                    attribute_quantile[(quant + 1)],
+                    '" label="',
+                    round(attribute_quantile[quant], 4),
+                    " - ",
+                    round(attribute_quantile[(quant + 1)], 4),
+                    '">',
                 )
 
-        qml += ranges
-        qml += "    </ranges>"
-
         # Write symbols
-        qml += "    <symbols>"
+        qml += ranges
+        qml += "\n    </ranges>\n" "    <symbols>\n"
 
         for quant in range(no_quantile):
-            qml += paste(
-                '      <symbol outputUnit="MM" alpha="1" type="line" name="',
-                (quant - 1),
-                '">',
-                sep="",
+            qml += (
+                f'<symbol outputUnit="MM" alpha="1" type="line" name="{quant - 1}">\n'
+                f'        <layer pass="{quant - 1}" class="SimpleLine" locked="0">\n'
+                '          <prop k="capstyle" v="square"/>\n'
             )
-            qml += paste(
-                '        <layer pass="',
-                (quant - 1),
-                '" class="SimpleLine" locked="0">',
-                sep="",
-            )
-            qml += '          <prop k="capstyle" v="square"/>'
             qml += colortable[quant]
-            qml += '          <prop k="customdash" v="5;2"/>'
-            qml += '          <prop k="joinstyle" v="bevel"/>'
-            qml += '          <prop k="offset" v="0"/>'
-            qml += '          <prop k="penstyle" v="solid"/>'
-            qml += '          <prop k="use_custom_dash" v="0"/>'
-            qml += '          <prop k="width" v="0.26"/>'
-            qml += "        </layer>"
-            qml += "      </symbol>"
+            qml += (
+                '\n          <prop k="customdash" v="5;2"/>\n'
+                '          <prop k="joinstyle" v="bevel"/>\n'
+                '          <prop k="offset" v="0"/>\n'
+                '          <prop k="penstyle" v="solid"/>\n'
+                '          <prop k="use_custom_dash" v="0"/>\n'
+                '          <prop k="width" v="0.26"/>\n'
+                "        </layer>\n"
+                "      </symbol>\n"
+            )
 
         # Write Footer
-        qml += "    </symbols>"
-        qml += "    <source-symbol>"
-        qml += '      <symbol outputUnit="MM" alpha="1" type="line" name="0">'
-        qml += '        <layer pass="0" class="SimpleLine" locked="0">'
-        qml += '          <prop k="capstyle" v="square"/>'
-        qml += '          <prop k="color" v="161,238,135,255"/>'
-        qml += '          <prop k="customdash" v="5;2"/>'
-        qml += '          <prop k="joinstyle" v="bevel"/>'
-        qml += '          <prop k="offset" v="0"/>'
-        qml += '          <prop k="penstyle" v="solid"/>'
-        qml += '          <prop k="use_custom_dash" v="0"/>'
-        qml += '          <prop k="width" v="0.26"/>'
-        qml += "        </layer>"
-        qml += "      </symbol>"
-        qml += "    </source-symbol>"
-        qml += '    <mode name="quantile"/>'
-        qml += '    <rotation field=""/>'
-        qml += '    <sizescale field=""/>'
-        qml += "  </renderer-v2>"
-        qml += "  <customproperties/>"
-        qml += '  <displayfield>"' + attribute + '"</displayfield>'
-        qml += "  <attributeactions/>"
-        qml += "</qgis>"
+        qml += (
+            "    </symbols>\n"
+            "    <source-symbol>\n"
+            '      <symbol outputUnit="MM" alpha="1" type="line" name="0">\n'
+            '        <layer pass="0" class="SimpleLine" locked="0">\n'
+            '          <prop k="capstyle" v="square"/>\n'
+            '          <prop k="color" v="161,238,135,255"/>\n'
+            '          <prop k="customdash" v="5;2"/>\n'
+            '          <prop k="joinstyle" v="bevel"/>\n'
+            '          <prop k="offset" v="0"/>\n'
+            '          <prop k="penstyle" v="solid"/>\n'
+            '          <prop k="use_custom_dash" v="0"/>\n'
+            '          <prop k="width" v="0.26"/>\n'
+            "        </layer>\n"
+            "      </symbol>\n"
+            "    </source-symbol>\n"
+            '    <mode name="quantile"/>\n'
+            '    <rotation field=""/>\n'
+            '    <sizescale field=""/>\n'
+            "  </renderer-v2>\n"
+            "  <customproperties/>\n"
+            f'  <displayfield>"{attribute}"</displayfield>\n'
+            "  <attributeactions/>\n"
+            "</qgis>\n"
+        )
 
         # Save qml-file
         qml_output = paste(
