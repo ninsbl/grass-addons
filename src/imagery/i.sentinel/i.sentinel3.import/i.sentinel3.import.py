@@ -643,20 +643,49 @@ def intersect_region(region_current, region_stripe, align_current=True):
     starting from the sw-corner
     """
     relevant_keys = ["n", "s", "e", "w", "nsres", "ewres"]
-    if align_current:
-        region_dict = {"nsres": region_current["nsres"], "ewres": region_current["ewres"]}
-    else:
-        region_dict = {"nsres": region_stripe["nsres"], "ewres": region_stripe["ewres"]}
-    region_current = {region_key: float(region_current[region_key]) for region_key in relevant_keys}
-    region_stripe = {region_key: float(region_stripe[region_key]) for region_key in relevant_keys}
+    region_current = {
+        region_key: float(region_current[region_key]) for region_key in relevant_keys
+    }
+    region_stripe = {
+        region_key: float(region_stripe[region_key]) for region_key in relevant_keys
+    }
+    region_dict = region_current.copy()
+    if not align_current:
+        region_dict.update(
+            {"nsres": region_stripe["nsres"], "ewres": region_stripe["ewres"]}
+        )
     stripe_s = region_stripe["s"] - region_stripe["nsres"] / 2.0
     stripe_n = region_stripe["n"] + region_stripe["nsres"] / 2.0
     stripe_w = region_stripe["w"] - region_stripe["ewres"] / 2.0
     stripe_e = region_stripe["e"] + region_stripe["ewres"] / 2.0
-    region_dict["s"] = region_current["s"] if region_current["s"] >= stripe_s else region_current["s"] + np.ceil((region_current["s"] - stripe_s) / float(region_dict["nsres"])) * float(region_dict["nsres"])
-    region_dict["w"] = region_current["w"] if region_current["w"] >= stripe_w else region_current["w"] + np.ceil((region_current["w"] - stripe_w) / float(region_dict["ewres"])) * float(region_dict["ewres"])
-    region_dict["n"] = region_current["n"] if region_current["n"] <= stripe_n else region_current["n"] - np.floor((region_current["n"] - stripe_n) / float(region_dict["nsres"])) * float(region_dict["nsres"])
-    region_dict["e"] = region_current["e"] if region_current["e"] <= stripe_e else region_current["e"] - np.floor((region_current["e"] - stripe_e) / float(region_dict["ewres"])) * float(region_dict["ewres"])
+    region_dict["s"] = max(
+        region_current["s"],
+        region_current["s"]
+        + np.ceil((region_current["s"] - stripe_s) / float(region_dict["nsres"]))
+        * float(region_dict["nsres"]),
+    )
+    region_dict["n"] = min(
+        region_current["n"],
+        region_current["n"]
+        - np.floor((region_current["n"] - stripe_n) / float(region_dict["nsres"]))
+        * float(region_dict["nsres"]),
+    )
+    if stripe_e > stripe_w:
+        new_w = max(
+            region_current["w"],
+            region_current["w"]
+            + np.ceil((region_current["w"] - stripe_w) / float(region_dict["ewres"]))
+            * float(region_dict["ewres"]),
+        )
+        new_e = min(
+            region_current["e"],
+            region_current["e"]
+            - np.floor((region_current["e"] - stripe_e) / float(region_dict["ewres"]))
+            * float(region_dict["ewres"]),
+        )
+        if new_w < new_e:
+            region_dict["w"] = new_w
+            region_dict["e"] = new_e
     return region_dict
 
 
@@ -796,7 +825,11 @@ def get_geocoding(zip_file, root, geo_bands_dict, sun_mask=None, region_bounds=N
             )
 
             if mask.all():
-                gs.warning(_("No valid pixels inside computational region found in {}").format(str(zip_file.filename)))
+                gs.warning(
+                    _("No valid pixels inside computational region found in {}").format(
+                        str(zip_file.filename)
+                    )
+                )
                 return None, None, None
 
     return nc_bands, mask, resolution
@@ -938,11 +971,7 @@ def get_band_metadata(
 
     # Define unit
     unit = nc_variable.units if "units" in band_attrs else None
-    unit = (
-        "degree_celsius"
-        if band_tuple[0].startswith("LST") and to_celsius
-        else unit
-    )
+    unit = "degree_celsius" if band_tuple[0].startswith("LST") and to_celsius else unit
     metadata["unit"] = unit
 
     # Define datatype and import method
@@ -982,12 +1011,18 @@ def get_band_metadata(
         fill_val = nc_variable._FillValue
         if fill_val > 0:
             min_val = data_range["min"] if min_val is None else min_val
-            max_val = fill_val - 1 if max_val is None else max_val  # data_range["resolution"]
+            max_val = (
+                fill_val - 1 if max_val is None else max_val
+            )  # data_range["resolution"]
         elif fill_val <= 0:
-            min_val = fill_val + 1 if min_val is None else min_val  # data_range["resolution"]
+            min_val = (
+                fill_val + 1 if min_val is None else min_val
+            )  # data_range["resolution"]
             max_val = data_range["max"] if max_val is None else max_val
     else:
-        min_val = data_range["min"] + 1 if min_val is None else min_val  # data_range["resolution"]
+        min_val = (
+            data_range["min"] + 1 if min_val is None else min_val
+        )  # data_range["resolution"]
         max_val = data_range["max"] if max_val is None else max_val
 
     if "flag_masks" in band_attrs:
@@ -1081,8 +1116,17 @@ def import_s3(s3_file, kwargs, s3_product=None):
         sun_region_bounds = region_bounds.copy()
         if mod_flags["r"] or kwargs["maximum_solar_angle"]:
             tmp_ascii_sun = TMP_FILE / f"{rmap}_sun_parameters.txt"
-            module_queue, register_output, sun_region_dict = s3_product.get_sun_parameters(
-                zip_file, root, rmap, tmp_ascii_sun, region_bounds, maximum_solar_angle=kwargs["maximum_solar_angle"]
+            (
+                module_queue,
+                register_output,
+                sun_region_dict,
+            ) = s3_product.get_sun_parameters(
+                zip_file,
+                root,
+                rmap,
+                tmp_ascii_sun,
+                region_bounds,
+                maximum_solar_angle=kwargs["maximum_solar_angle"],
             )
             register_strings.append(register_output)
             if module_queue is None:
@@ -1090,13 +1134,25 @@ def import_s3(s3_file, kwargs, s3_product=None):
             region_dicts["sun_parameters"] = sun_region_dict
 
             if kwargs["maximum_solar_angle"]:
-                sun_region_bounds = gs.parse_command("g.region", flags="ugb", quiet=True, **intersect_region(dict(kwargs["current_reg"]), sun_region_dict, align_current=False))
+                sun_region_bounds = gs.parse_command(
+                    "g.region",
+                    flags="ugb",
+                    quiet=True,
+                    **intersect_region(
+                        dict(kwargs["current_reg"]),
+                        sun_region_dict,
+                        align_current=False,
+                    ),
+                )
         for stripe, stripe_dict in s3_product.requested_stripe_content.items():
             # Could be parallelized!!!
             # Get geocoding (lat/lon, elevation) and initial mask
             tmp_ascii = TMP_FILE / f"{rmap}_{stripe}.txt"
             nc_bands, mask, resolution = get_geocoding(
-                zip_file, root, stripe_dict["geocoding"], region_bounds=sun_region_bounds
+                zip_file,
+                root,
+                stripe_dict["geocoding"],
+                region_bounds=sun_region_bounds,
             )
             if nc_bands is None:
                 return None, None, None
@@ -1124,9 +1180,13 @@ def import_s3(s3_file, kwargs, s3_product=None):
             )
             stripe_region_dict["ewres"] = float(resolution[0])
             stripe_region_dict["nsres"] = float(resolution[1])
-            sun_region_dict_intersect = intersect_region(dict(kwargs["current_reg"]), sun_region_dict, align_current=False)
+            sun_region_dict_intersect = intersect_region(
+                dict(kwargs["current_reg"]), sun_region_dict, align_current=False
+            )
             if kwargs["maximum_solar_angle"]:
-                region_dicts[stripe] = intersect_region(sun_region_dict_intersect, stripe_region_dict, align_current=False)
+                region_dicts[stripe] = intersect_region(
+                    sun_region_dict_intersect, stripe_region_dict, align_current=False
+                )
             else:
                 region_dicts[stripe] = stripe_region_dict
 
@@ -1324,7 +1384,7 @@ class S3Product:
                 # Rescale temperature variables if requested
                 if band.full_name == "LST" and module_flags["c"]:
                     add_array = convert_units(add_array, "K", "degree_celsius")
- 
+
                 # Write metadata json if requested
                 band_attrs = nc_file_open[band.full_name].ncattrs()
 
@@ -1382,7 +1442,9 @@ class S3Product:
 
             return nc_bands, module_queue, meta_information, fmt
 
-    def get_sun_parameters(self, zip_file, root, prefix, tmp_ascii, region_bounds, maximum_solar_angle=None):
+    def get_sun_parameters(
+        self, zip_file, root, prefix, tmp_ascii, region_bounds, maximum_solar_angle=None
+    ):
         """https://github.com/sertit/eoreader/blob/main/eoreader/products/optical/s3_slstr_product.py#L862"""
 
         # nc_file = sun_azimuth_dict["nc_file"]
@@ -1401,7 +1463,11 @@ class S3Product:
         with Dataset(nc_file_path) as sun_parameter_nc:
             file_metadata = get_file_metadata(sun_parameter_nc)
             if maximum_solar_angle:
-                sun_mask = sun_parameter_nc[S3_SUN_PARAMTERS[self.product_type]["sun_bands"]["bands"]["solar_zenith"].format(self.view)][:] >= float(maximum_solar_angle)
+                sun_mask = sun_parameter_nc[
+                    S3_SUN_PARAMTERS[self.product_type]["sun_bands"]["bands"][
+                        "solar_zenith"
+                    ].format(self.view)
+                ][:] >= float(maximum_solar_angle)
             nc_bands, mask, resolution = get_geocoding(
                 zip_file,
                 root,
@@ -1438,7 +1504,7 @@ class S3Product:
                     map_name,
                     distance=3,
                     fill_flags="ks",
-                    zrange=[-32767,32768],
+                    zrange=[-32767, 32768],
                     val_col=len(nc_bands),
                     data_type="FCELL",
                     method="mean",
@@ -1458,9 +1524,10 @@ class S3Product:
                     },
                 }
 
-
             # Write to temporary file
-            sun_region_dict = write_xyz(tmp_ascii, nc_bands, mask, fmt=fmt, project=True)
+            sun_region_dict = write_xyz(
+                tmp_ascii, nc_bands, mask, fmt=fmt, project=True
+            )
             sun_region_dict["ewres"], sun_region_dict["nsres"] = float(
                 resolution[0]
             ), float(resolution[1])
@@ -1547,7 +1614,10 @@ class S3Band:
         return None
 
     def _get_solar_flux_dict_for_band(self, product_type):
-        if S3_SOLAR_FLUX[product_type] and self.band_id in S3_SOLAR_FLUX[product_type]["defaults"]:
+        if (
+            S3_SOLAR_FLUX[product_type]
+            and self.band_id in S3_SOLAR_FLUX[product_type]["defaults"]
+        ):
             return {
                 "default": S3_SOLAR_FLUX[product_type]["defaults"][self.band_id],
                 "band": S3_SOLAR_FLUX[product_type]["band"].format(
@@ -1597,8 +1667,12 @@ class S3Band:
 def get_solar_angle_bounds(region_bounds, sun_region_dict):
     """"""
     solar_bounds = gs.parse_command("g.region", flags="ugl", **sun_region_dict)
-    solar_bounds["ll_n"] = max(float(solar_bounds["nw_lat"]), float(solar_bounds["ne_lat"]))
-    solar_bounds["ll_s"] = min(float(solar_bounds["sw_lat"]), float(solar_bounds["se_lat"]))
+    solar_bounds["ll_n"] = max(
+        float(solar_bounds["nw_lat"]), float(solar_bounds["ne_lat"])
+    )
+    solar_bounds["ll_s"] = min(
+        float(solar_bounds["sw_lat"]), float(solar_bounds["se_lat"])
+    )
     if solar_bounds["ll_n"] < float(region_bounds["ll_n"]):
         region_bounds["ll_n"] = solar_bounds["ll_n"]
     if float(solar_bounds["ll_s"]) > float(region_bounds["ll_s"]):
@@ -1671,7 +1745,9 @@ def main():
         "current_reg": dict(current_region),
         "mod_flags": flags,
         "meta_dict": meta_info_dict,
-        "maximum_solar_angle": float(options["maximum_solar_angle"]) if options["maximum_solar_angle"] else None,
+        "maximum_solar_angle": float(options["maximum_solar_angle"])
+        if options["maximum_solar_angle"]
+        else None,
     }
 
     # if flags["p"]:
@@ -1726,7 +1802,13 @@ def main():
         if flags["n"]:
             stripe_env["GRASS_REGION"] = gs.region_env(**adjust_region(stripe_region))
         else:
-            stripe_env["GRASS_REGION"] = gs.region_env(**intersect_region(dict(current_region), stripe_region, align_current=stripe_id != "sun_parameters"))
+            stripe_env["GRASS_REGION"] = gs.region_env(
+                **intersect_region(
+                    dict(current_region),
+                    stripe_region,
+                    align_current=stripe_id != "sun_parameters",
+                )
+            )
         stripe_envs[stripe_id] = stripe_env
 
     if flags["r"]:
@@ -1742,10 +1824,9 @@ def main():
             queue.put(MultiModule(module_list))
         queue.wait()
         # Here one could zoom to non-null pixels in solar angle map
-        # g.region zoom=zolar_zenith 
-        # if maximum_solar_angle is given in consistently limit 
+        # g.region zoom=zolar_zenith
+        # if maximum_solar_angle is given in consistently limit
         # imported pixels
-
 
     gs.verbose(
         _("Importing scenes {}").format(
@@ -1779,7 +1860,9 @@ def main():
         )
         if not gs.raster_info(mapname)["max"]:
             gs.warning(("Raster map {} is empty. Removing...").format(mapname))
-            gs.run_command("g.remove", type="raster", name=mapname, flags="f", quiet=True)
+            gs.run_command(
+                "g.remove", type="raster", name=mapname, flags="f", quiet=True
+            )
             continue
         metadata["semantic_label"] = (
             metadata["semantic_label"]
@@ -1867,7 +1950,9 @@ def main():
         gs.verbose(
             _("Writing register file <{}>...").format(options["register_output"])
         )
-        Path(options["register_output"]).write_text(t_register_strings + "\n", encoding="UTF8")
+        Path(options["register_output"]).write_text(
+            t_register_strings + "\n", encoding="UTF8"
+        )
     else:
         print(t_register_strings)
     return 0
