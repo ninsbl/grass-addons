@@ -3,9 +3,16 @@
 <em>r.buildvrt.gdal</em> builds GDAL virtual rasters over GRASS GIS raster
 maps and links them to the mapset with <em>r.external</em>. The module is
 written as a workaround for a limitation in GRASS GIS Virtual Rasters (VRT)
-GDAL-linked raster maps (through <em>r.external</em> / <em>r.external.out</em>.
-In that case GRASS GIS Virtual Rasters currently show performance issues.
-See: <a href="https://github.com/OSGeo/grass/issues/4345">#4345</a>
+format with GDAL-linked raster maps (through <em>r.external</em> /
+<em>r.external.out</em>. In that case GRASS GIS Virtual Rasters currently
+show performance issues. See:
+<a href="https://github.com/OSGeo/grass/issues/4345">#4345</a>
+
+<p>
+For the resulting maps GDAL VRT text files are created either in a
+directory named "gdal" in the current mapset og in a userdefined <b>
+vrt_directory</b>. Those files are not removed when the raster map is
+removed and the user is responsible for removing them when needed.
 
 <h2>REQUIREMENTS</h2>
 <em>r.buildvrt.gdal</em> uses the Python bindings for
